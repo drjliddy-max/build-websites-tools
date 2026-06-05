@@ -7,7 +7,8 @@
   "bin": {
     "gate-ada": "bin/gate-ada.mjs",
     "gate-seo": "bin/gate-seo.mjs",
-    "gate-ai-instrumentation": "bin/gate-ai-instrumentation.mjs"
+    "gate-ai-instrumentation": "bin/gate-ai-instrumentation.mjs",
+    "gate-ai-instrumentation-source": "bin/gate-ai-instrumentation-source.mjs"
   },
   "files": [
     "bin",
