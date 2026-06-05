@@ -33,8 +33,6 @@
 import { JSDOM } from "jsdom";
 import fs from "node:fs";
 import path from "node:path";
-import { ensureBaseUrlReady } from "./ensure-base-url";
-import { loadGateConfig, type GateConfig } from "./load-config";
 
 export type CheckResult = {
   name: string;
@@ -356,9 +354,48 @@ function loadAiInstrumentationConfig(): AiInstrumentationConfig {
   return {};
 }
 
+/**
+ * Minimal config reader specific to this gate: we only need baseUrl
+ * (for the HTTP probe) + the aiInstrumentation extension block. We
+ * deliberately do NOT use loadGateConfig() because its broader
+ * marketing-site validation (required routes, contact page, etc.)
+ * belongs to gate-seo, not the AI Instrumentation Contract.
+ *
+ * §17.3.1.2 is orthogonal to whether the site has a /contact page;
+ * coupling them would block the AI gate on unrelated drift.
+ */
+function loadMinimalConfig(): { baseUrl: string; aiInstrumentation: AiInstrumentationConfig } {
+  const configPath = path.join(process.cwd(), "gate.config.json");
+  if (!fs.existsSync(configPath)) {
+    console.error(`✗ gate.config.json not found at ${configPath}`);
+    process.exit(1);
+  }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+  } catch (err) {
+    console.error(`✗ ${configPath} is not valid JSON: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  const envOverride = process.env.GATE_BASE_URL;
+  const configBaseUrl = typeof parsed.baseUrl === "string" ? parsed.baseUrl : "";
+  const baseUrl = envOverride || configBaseUrl;
+  if (!/^https?:\/\/[^\s]+$/.test(baseUrl)) {
+    console.error(
+      `✗ baseUrl required for AI instrumentation probe — set GATE_BASE_URL env var or gate.config.json baseUrl`,
+    );
+    process.exit(1);
+  }
+  const ai = parsed.aiInstrumentation;
+  const aiInstrumentation =
+    typeof ai === "object" && ai !== null && !Array.isArray(ai)
+      ? (ai as AiInstrumentationConfig)
+      : {};
+  return { baseUrl, aiInstrumentation };
+}
+
 async function main(): Promise<void> {
-  const config = loadGateConfig();
-  const aiConfig = loadAiInstrumentationConfig();
+  const { baseUrl, aiInstrumentation: aiConfig } = loadMinimalConfig();
 
   if (aiConfig.skip) {
     console.log(
@@ -369,9 +406,6 @@ async function main(): Promise<void> {
     );
     return;
   }
-
-  const stopServer = await ensureBaseUrlReady(config);
-  const baseUrl = process.env.GATE_BASE_URL || config.baseUrl;
 
   try {
     console.log(`gate:ai-instrumentation  baseUrl=${baseUrl}`);
@@ -421,8 +455,9 @@ async function main(): Promise<void> {
     console.log(
       `\ngate:ai-instrumentation  PASS — ${filtered.length}/${filtered.length} dimension(s) verified`,
     );
-  } finally {
-    await stopServer();
+  } catch (err) {
+    console.error(`\ngate:ai-instrumentation  ERROR — ${(err as Error).message}`);
+    process.exit(1);
   }
 }
 
