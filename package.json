@@ -1,0 +1,33 @@
+{
+  "name": "build-websites-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared build-time gates for portfolio websites — ADA WCAG 2.1 AA enforcement + Google indexing-rules enforcement + MASTER_VISIBILITY_MATRIX §17.3.1.2 AI Instrumentation Contract enforcement. Consumed by each site (siteclinic-web, ada-audit-tool site/, daily-rise, etc.) via file:../build-websites-tools dependency. Build script once, use many.",
+  "bin": {
+    "gate-ada": "bin/gate-ada.mjs",
+    "gate-seo": "bin/gate-seo.mjs",
+    "gate-ai-instrumentation": "bin/gate-ai-instrumentation.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/__tests__/*.test.ts"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "@types/jsdom": "^21.1.7",
+    "axe-core": "^4.10.0",
+    "jsdom": "^26.1.0",
+    "playwright": "^1.49.0",
+    "tsx": "^4.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}
