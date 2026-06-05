@@ -6,11 +6,15 @@
  * Spawns tsx to execute src/gate-seo.ts. tsx is resolved via Node's
  * standard module resolution (createRequire from this script's URL) so
  * it works in both install topologies:
- *   - file:./tools/build-websites-tools — tsx may hoist to consumer's
- *     top-level node_modules OR live inside the vendored package's own
- *     node_modules
- *   - github:drjliddy-max/build-websites-tools#vX.Y.Z — npm fetches the
- *     tarball and hoists tsx to the consumer's top-level node_modules
+ *   - file:./tools/build-websites-tools — npm hoists tsx to the
+ *     consumer's top-level node_modules
+ *   - github:drjliddy-max/build-websites-tools#vX.Y.Z — npm hoists tsx
+ *     the same way after fetching the github tarball
+ *
+ * Note: require.resolve("tsx") — bare specifier — uses tsx's package.json
+ * `exports` mapping ("." -> "./dist/loader.mjs"). Subpath like
+ * "tsx/dist/loader.mjs" is NOT a valid resolve target because tsx does
+ * not expose that subpath in its exports field.
  *
  * Working directory (process.cwd()) stays the consumer's repo — that's
  * where load-config.ts finds gate.config.json.
@@ -24,9 +28,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const scriptPath = path.join(__dirname, "..", "src", "gate-seo.ts");
 
 const require = createRequire(import.meta.url);
-const tsxLoaderUrl = pathToFileURL(
-  require.resolve("tsx/dist/loader.mjs"),
-).href;
+const tsxLoaderUrl = pathToFileURL(require.resolve("tsx")).href;
 
 const result = spawnSync(process.execPath, ["--import", tsxLoaderUrl, scriptPath], {
   stdio: "inherit",

@@ -33,6 +33,7 @@
 import { JSDOM } from "jsdom";
 import fs from "node:fs";
 import path from "node:path";
+import { ensureBaseUrlReady } from "./ensure-base-url";
 
 export type CheckResult = {
   name: string;
@@ -364,7 +365,12 @@ function loadAiInstrumentationConfig(): AiInstrumentationConfig {
  * §17.3.1.2 is orthogonal to whether the site has a /contact page;
  * coupling them would block the AI gate on unrelated drift.
  */
-function loadMinimalConfig(): { baseUrl: string; aiInstrumentation: AiInstrumentationConfig } {
+function loadMinimalConfig(): {
+  baseUrl: string;
+  launchCommand?: string;
+  startupTimeoutMs?: number;
+  aiInstrumentation: AiInstrumentationConfig;
+} {
   const configPath = path.join(process.cwd(), "gate.config.json");
   if (!fs.existsSync(configPath)) {
     console.error(`✗ gate.config.json not found at ${configPath}`);
@@ -391,11 +397,22 @@ function loadMinimalConfig(): { baseUrl: string; aiInstrumentation: AiInstrument
     typeof ai === "object" && ai !== null && !Array.isArray(ai)
       ? (ai as AiInstrumentationConfig)
       : {};
-  return { baseUrl, aiInstrumentation };
+  return {
+    baseUrl,
+    launchCommand: typeof parsed.launchCommand === "string" ? parsed.launchCommand : undefined,
+    startupTimeoutMs:
+      typeof parsed.startupTimeoutMs === "number" ? parsed.startupTimeoutMs : undefined,
+    aiInstrumentation,
+  };
 }
 
 async function main(): Promise<void> {
-  const { baseUrl, aiInstrumentation: aiConfig } = loadMinimalConfig();
+  const {
+    baseUrl,
+    launchCommand,
+    startupTimeoutMs,
+    aiInstrumentation: aiConfig,
+  } = loadMinimalConfig();
 
   if (aiConfig.skip) {
     console.log(
@@ -407,7 +424,14 @@ async function main(): Promise<void> {
     return;
   }
 
+  let cleanup: (() => Promise<void>) | undefined;
   try {
+    cleanup = await ensureBaseUrlReady({
+      routes: [],
+      baseUrl,
+      launchCommand,
+      startupTimeoutMs,
+    });
     console.log(`gate:ai-instrumentation  baseUrl=${baseUrl}`);
     const result = await evaluateAiInstrumentation(baseUrl);
 
@@ -450,14 +474,17 @@ async function main(): Promise<void> {
       console.error(
         "Spec: MASTER_VISIBILITY_MATRIX §17.3.1.2 AI Instrumentation Contract",
       );
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     console.log(
       `\ngate:ai-instrumentation  PASS — ${filtered.length}/${filtered.length} dimension(s) verified`,
     );
   } catch (err) {
     console.error(`\ngate:ai-instrumentation  ERROR — ${(err as Error).message}`);
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    await cleanup?.();
   }
 }
 

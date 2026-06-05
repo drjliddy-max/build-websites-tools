@@ -6,7 +6,9 @@
  * Spawns tsx to execute src/gate-ada.ts. tsx is resolved via Node's
  * standard module resolution (createRequire from this script's URL) so
  * it works in both install topologies (file: vendored OR github tarball
- * fetched). Consumer sites don't list tsx as a dependency.
+ * fetched). require.resolve("tsx") — bare specifier — uses tsx's
+ * package.json exports mapping; subpaths like "tsx/dist/loader.mjs" are
+ * NOT exposed by tsx and would fail with ERR_PACKAGE_PATH_NOT_EXPORTED.
  *
  * Working directory (process.cwd()) stays the consumer's repo — that's
  * where load-config.ts finds gate.config.json.
@@ -20,9 +22,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const scriptPath = path.join(__dirname, "..", "src", "gate-ada.ts");
 
 const require = createRequire(import.meta.url);
-const tsxLoaderUrl = pathToFileURL(
-  require.resolve("tsx/dist/loader.mjs"),
-).href;
+const tsxLoaderUrl = pathToFileURL(require.resolve("tsx")).href;
 
 const result = spawnSync(process.execPath, ["--import", tsxLoaderUrl, scriptPath], {
   stdio: "inherit",
