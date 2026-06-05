@@ -103,6 +103,58 @@ export function loadGateConfig(): GateConfig {
     process.exit(1);
   }
 
+  /*
+   * Required-pages check — added 2026-06-05 after jeffrystein-web shipped
+   * to production without /privacy, /terms, or /accessibility. The gate
+   * was scanning whatever was listed in routes, but never verifying that
+   * the doctrine-required pages were among them. Result: false-green
+   * builds on legally-incomplete sites.
+   *
+   * Per build-websites-template/03-build-standard.md, these five pages
+   * are REQUIRED on every owned marketing site:
+   *
+   *   /                — homepage
+   *   /privacy         — privacy policy
+   *   /terms           — terms of service
+   *   /accessibility   — accessibility statement (WCAG + ADA disclosure)
+   *   /contact         — direct-inquiry surface
+   *
+   * No opt-out flag. Opt-outs are how sites end up legally incomplete.
+   * If a site genuinely doesn't need /contact (e.g., book-only with no
+   * inquiry path), that's a product decision the operator should make
+   * via a documented exception in the site's CLAUDE.md, not a quiet
+   * gate-config omission. Fix the spec, not the enforcement.
+   */
+  const REQUIRED_PAGES = [
+    "/",
+    "/privacy",
+    "/terms",
+    "/accessibility",
+    "/contact",
+  ] as const;
+  const routesAsStrings = obj.routes as string[];
+  const missingRequired = REQUIRED_PAGES.filter(
+    (p) => !routesAsStrings.includes(p),
+  );
+  if (missingRequired.length > 0) {
+    console.error(
+      `✗ ${configPath}: missing required page(s) from routes — ${JSON.stringify(missingRequired)}`,
+    );
+    console.error(
+      `  Per build-websites-template/03-build-standard.md, every owned marketing site must`,
+    );
+    console.error(
+      `  expose: /, /privacy, /terms, /accessibility, /contact. Add the missing entries to`,
+    );
+    console.error(
+      `  the routes array AND create the corresponding page files (the route scan that`,
+    );
+    console.error(
+      `  follows will catch routes-without-pages with a 404).`,
+    );
+    process.exit(1);
+  }
+
   // baseUrl validation
   if (!("baseUrl" in obj)) {
     console.error(`✗ ${configPath}: "baseUrl" field is required`);
