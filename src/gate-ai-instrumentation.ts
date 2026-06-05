@@ -31,6 +31,8 @@
  * dimension marked "accepted exception".
  */
 import { JSDOM } from "jsdom";
+import fs from "node:fs";
+import path from "node:path";
 import { ensureBaseUrlReady } from "./ensure-base-url";
 import { loadGateConfig, type GateConfig } from "./load-config";
 
@@ -334,18 +336,29 @@ interface AiInstrumentationConfig {
   };
 }
 
-function loadAiInstrumentationConfig(
-  gate: GateConfig,
-): AiInstrumentationConfig {
-  const raw = (gate as unknown as Record<string, unknown>).aiInstrumentation;
-  if (raw === undefined || raw === null) return {};
-  if (typeof raw !== "object" || Array.isArray(raw)) return {};
-  return raw as AiInstrumentationConfig;
+function loadAiInstrumentationConfig(): AiInstrumentationConfig {
+  // load-config.ts strict-validates the known fields and strips the
+  // rest; re-read gate.config.json directly so our extension field
+  // survives.
+  try {
+    const raw = fs.readFileSync(
+      path.join(process.cwd(), "gate.config.json"),
+      "utf8",
+    );
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const ai = parsed.aiInstrumentation;
+    if (typeof ai === "object" && ai !== null && !Array.isArray(ai)) {
+      return ai as AiInstrumentationConfig;
+    }
+  } catch {
+    // Fall through to empty config.
+  }
+  return {};
 }
 
 async function main(): Promise<void> {
   const config = loadGateConfig();
-  const aiConfig = loadAiInstrumentationConfig(config);
+  const aiConfig = loadAiInstrumentationConfig();
 
   if (aiConfig.skip) {
     console.log(

@@ -12,12 +12,18 @@
  */
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const scriptPath = path.join(__dirname, "..", "src", "gate-seo.ts");
+// Resolve tsx via absolute file URL so node's --import finds it in our
+// OWN node_modules instead of the consumer site's cwd (which doesn't
+// list tsx as a dependency and isn't expected to).
+const tsxLoaderUrl = pathToFileURL(
+  path.join(__dirname, "..", "node_modules", "tsx", "dist", "loader.mjs"),
+).href;
 
-const result = spawnSync(process.execPath, ["--import", "tsx", scriptPath], {
+const result = spawnSync(process.execPath, ["--import", tsxLoaderUrl, scriptPath], {
   stdio: "inherit",
 });
 if (result.error) {
