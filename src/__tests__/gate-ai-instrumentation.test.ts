@@ -150,7 +150,7 @@ test("extractJsonLdTypes — extracts Organization + WebSite types", () => {
     </script>
   `;
   const types = extractJsonLdTypes(html);
-  assert.deepEqual(types.sort(), ["Organization", "WebSite"]);
+  assert.deepEqual(types.sort((a, b) => a.localeCompare(b)), ["Organization", "WebSite"]);
 });
 
 test("extractJsonLdTypes — handles @graph nested types", () => {
@@ -163,7 +163,7 @@ test("extractJsonLdTypes — handles @graph nested types", () => {
     </script>
   `;
   const types = extractJsonLdTypes(html);
-  assert.deepEqual(types.sort(), ["Organization", "WebSite"]);
+  assert.deepEqual(types.sort((a, b) => a.localeCompare(b)), ["Organization", "WebSite"]);
 });
 
 test("extractJsonLdTypes — JSDOM decodes entity-encoded type attribute (§3.1.3 layer 7)", () => {
@@ -194,7 +194,7 @@ test("extractJsonLdTypes — handles @type as array", () => {
     </script>
   `;
   const types = extractJsonLdTypes(html);
-  assert.deepEqual(types.sort(), ["Organization", "Service"]);
+  assert.deepEqual(types.sort((a, b) => a.localeCompare(b)), ["Organization", "Service"]);
 });
 
 // ─────────── evaluateJsonLd integration ───────────

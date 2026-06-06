@@ -258,7 +258,7 @@ test("detectHomepageJsonLdTypes — extracts single-quoted types (React inline)"
 
 test("detectHomepageJsonLdTypes — extracts @type array literals", () => {
   const body = `"@type": ["Organization", "Service"]`;
-  assert.deepEqual(detectHomepageJsonLdTypes(body).sort(), ["Organization", "Service"]);
+  assert.deepEqual(detectHomepageJsonLdTypes(body).sort((a, b) => a.localeCompare(b)), ["Organization", "Service"]);
 });
 
 test("detectHomepageJsonLdTypes — extracts multiple @type in @graph", () => {
@@ -272,7 +272,7 @@ test("detectHomepageJsonLdTypes — extracts multiple @type in @graph", () => {
     }\`;
   `;
   const types = detectHomepageJsonLdTypes(body);
-  assert.deepEqual(types.sort(), ["MedicalBusiness", "Organization", "WebSite"]);
+  assert.deepEqual(types.sort((a, b) => a.localeCompare(b)), ["MedicalBusiness", "Organization", "WebSite"]);
 });
 
 test("evaluateHomepageJsonLd — FAILS when no homepage source found", () => {
