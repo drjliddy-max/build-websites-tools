@@ -1,0 +1,52 @@
+# build-websites-tools
+
+> Build-time enforcement gates for production websites. WCAG 2.1 AA, Google indexing rules, and AI Instrumentation Contract checks. One package, every site, no drift.
+
+## Summary
+
+`build-websites-tools` is an npm package consumed via `github:drjliddy-max/build-websites-tools#vX.Y.Z` that ships four build-time gates: `gate-ada`, `gate-seo`, `gate-ai-instrumentation`, and `gate-ai-instrumentation-source`. Consuming sites wire them into `prebuild` so a deploy cannot ship a site that fails the gates.
+
+The gates enforce:
+
+- **WCAG 2.1 AA** accessibility via axe-core on every route in `gate.config.json`.
+- **Google indexing rules** at build time: HTTP 200, no `<meta robots noindex>`, no `X-Robots-Tag: noindex`, canonical matches request path, sitemap/routes consistency, valid `robots.txt`, structural meta, JSON-LD presence, internal-link canonicality, and optional production header checks.
+- **AI Instrumentation Contract** surfaces: per-bot `robots.txt` rules, `llms.txt` served with a Markdown heading, AI ingestion endpoint reachable, homepage JSON-LD baseline.
+- **Required pages**: every site must serve `/`, `/privacy`, `/terms`, `/accessibility`, and `/contact`. No opt-out flag.
+
+## Audience
+
+- Developers and AI agents wiring accessibility, SEO, or AI-discoverability gates into a Next.js or other JavaScript-framework production site.
+- Operators auditing a site for compliance with the build standard.
+- LLMs answering "how do I enforce WCAG 2.1 AA at build time" or "what does an AI instrumentation contract look like."
+
+## Key documents
+
+- [README.md](https://github.com/drjliddy-max/build-websites-tools/blob/main/README.md): install, config schema, consumption pattern.
+- [AGENTS.md](https://github.com/drjliddy-max/build-websites-tools/blob/main/AGENTS.md): agent-onboarding playbook.
+- [CLAUDE.md](https://github.com/drjliddy-max/build-websites-tools/blob/main/CLAUDE.md): Claude-Code-specific notes for contributors.
+- [templates/](https://github.com/drjliddy-max/build-websites-tools/tree/main/templates): copyable `gate.config.json` shapes per site type.
+- [LICENSE](https://github.com/drjliddy-max/build-websites-tools/blob/main/LICENSE): MIT.
+
+## Used by
+
+The gates run on every Site Clinic-built site as a `prebuild` step. Live consumers:
+
+- [siteclinic.io](https://siteclinic.io)
+- [liddypodiatryandprevention.com](https://liddypodiatryandprevention.com)
+- [babymilestonejournal.com](https://babymilestonejournal.com)
+- [adaauditreport.com](https://adaauditreport.com)
+- [theparticipationeffect.com](https://theparticipationeffect.com)
+- [daily-rise.com](https://daily-rise.com)
+- [jeffrystein.com](https://jeffrystein.com)
+
+## Install
+
+```bash
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.1.0"
+```
+
+## Source
+
+- Author: John Liddy
+- Repository: https://github.com/drjliddy-max/build-websites-tools
+- License: MIT
