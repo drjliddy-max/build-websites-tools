@@ -166,11 +166,28 @@ async function main() {
       console.log(`  ${r.route}: ${r.blocking} blocking, ${r.minor} minor`);
     }
 
+    // When the gate falls back to html-snapshot mode (Vercel and other
+    // cloud builders without Chromium), the axe color-contrast rule is
+    // disabled because JSDOM cannot compute rendered styles. We already
+    // print a warning at the start of the run, but operators scanning
+    // long build logs often see only the terminal PASS/FAIL line. Repeat
+    // the disclosure there so the coverage caveat is visible without
+    // scrolling. siteclinic-web commit 7bb07a6 (2026-06-08) shipped a
+    // serious color-contrast violation through a green Vercel build
+    // because the early warning was buried; this annotation closes that
+    // loop without changing exit semantics.
+    const modeSuffix =
+      scanMode === "html-snapshot"
+        ? "  [html-snapshot mode; color-contrast not evaluated, rerun in browser mode for full WCAG 2.1 AA coverage]"
+        : "";
+
     if (totalBlocking > 0) {
-      console.error(`\ngate:ada  FAIL: ${totalBlocking} blocking violation(s)`);
+      console.error(
+        `\ngate:ada  FAIL: ${totalBlocking} blocking violation(s)${modeSuffix}`,
+      );
       process.exit(1);
     }
-    console.log("\ngate:ada  PASS");
+    console.log(`\ngate:ada  PASS${modeSuffix}`);
   } finally {
     await stopServer();
   }
