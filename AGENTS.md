@@ -27,7 +27,7 @@ Do NOT use it for:
 1. Read the site's current `package.json` and `gate.config.json` (if any).
 2. Add the dependency:
    ```bash
-   npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.3.0"
+   npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.3.1"
    ```
 3. Add scripts to `package.json`:
    ```json
@@ -63,7 +63,7 @@ If a gate is producing a false positive (rare), open an issue against this repo 
 1. Check the latest tag: `git ls-remote --tags https://github.com/drjliddy-max/build-websites-tools | tail -5`
 2. Update the dependency in `package.json`:
    ```diff
-   - "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.3.0"
+   - "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.3.1"
    + "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.4.0"
    ```
 3. Run `npm install` to fetch the new version.
