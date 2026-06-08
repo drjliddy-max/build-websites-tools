@@ -2,6 +2,13 @@
 
 Get notified of major releases by subscribing at [siteclinic.io](https://siteclinic.io).
 
+## [Unreleased]
+
+- `chore(hygiene)`: portfolio audit (Sonar + Fallow + Graphify) cleanup. Removed 146 em/en dashes from source, tests, and bin wrappers per the portfolio no-long-dashes rule. Added `src/__tests__/no-long-dashes.test.ts` as a drift-prevention guard on src, bin, and top-level docs.
+- `fix(sonar)`: unnecessary backtick escape removed from two regex character classes (`gate-ai-instrumentation-source.ts`). Nested template literal in `gate-seo.ts:249` lifted to a local. In-place `.sort()` in tests replaced with `[...arr].sort()` to avoid mutation (S4043).
+- `refactor(bin)`: extracted shared spawn-tsx launcher to `bin/_run.mjs`. The four bin entries are now 3 to 7 lines each, delegating to `runGate({ binFileUrl, scriptName, gateLabel })`. Net 86 lines removed from bin/.
+- No behavior change. 47/47 tests pass (46 prior plus the new dash guard).
+
 ## [0.3.1] - 2026-06-07
 
 - Reworked `README.md` in the lead-magnet shape used by `design-os-template`: opens with problem framing, walks the four-gate process, includes "Used by" live customer list, lays out the free / paid boundary (gates free, Site Clinic monitoring paid), and adds a creator-credit section linking back to Site Clinic.
