@@ -73,6 +73,62 @@ Schema, validation rules, and the full list of optional production-architecture 
 
 That's it. No gate logic in your repo. No copy-pasted scripts. No drift surface.
 
+## Common pitfalls
+
+Three things a fresh consumer reliably hits on the first integration. None is a tooling defect; all three are easy once you know they exist.
+
+### `canonical link` fails locally with `http://...`
+
+`gate:seo` enforces `https://` on every canonical href, by design. Production canonicals must point at the deployed origin. The shipped marketing-site template defaults `baseUrl: "http://127.0.0.1:3000"`, and Next.js will inherit that as `metadataBase` if you do not override it.
+
+Fix: set `metadataBase` (or the framework equivalent) to your eventual deploy URL even in dev. The gate does not follow the URL. It checks the rendered string. Example for Next.js App Router:
+
+```tsx
+// src/app/layout.tsx
+export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://example.com"),
+  alternates: { canonical: "/" },
+};
+```
+
+### `og:type` missing on child pages (Next.js)
+
+Next.js metadata merging **replaces** the parent's `openGraph` object when a child sets its own. It does not field-merge. A root layout that declares `openGraph.type: "website"` does not pass through to any page that exports its own `openGraph`.
+
+Fix: either set the entire `openGraph` block at the root only, or include `type: "website"` (or the applicable type) explicitly on every page that overrides `openGraph`:
+
+```tsx
+export const metadata: Metadata = {
+  openGraph: { type: "website", url: "/about", title: "About" },
+};
+```
+
+### No analytics? Opt out of the GA4 check
+
+The `aiInstrumentation` runtime gate requires a GA4 measurement ID in the served homepage HTML by default: either an inline `gtag('config', 'G-…')` call or a `googletagmanager.com/gtag/js?id=G-…` loader script. This is correct for the matrix doctrine, but blocks sites that deliberately ship no analytics.
+
+Fix: declare the opt-out in `gate.config.json`. The gate will record it as a declared exception:
+
+```json
+{
+  "aiInstrumentation": {
+    "checks": { "ga4": false }
+  }
+}
+```
+
+For consent-gated GA4 (the script injects only after a user consent action), declare the measurement ID instead. The gate replaces the failed `ga4` check with a passing "consent-gated declared exception" line:
+
+```json
+{
+  "aiInstrumentation": {
+    "ga4": { "consentGated": { "measurementId": "G-XXXXXXXX" } }
+  }
+}
+```
+
+For a working end-to-end sample that exercises all of the above against a fresh Next.js 16 build, see [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) (live at [bwt-sample-site.vercel.app](https://bwt-sample-site.vercel.app)).
+
 ## What this package does NOT do (and where Site Clinic comes in)
 
 `build-websites-tools` is build-time enforcement. It runs once per deploy, fails the build if something's wrong, and exits. That's the whole job.
@@ -98,6 +154,8 @@ That's what [Site Clinic](https://siteclinic.io) does. The gates are free; the o
 | `allowedOffSitemapRoutes` | no | `string[]` | Internal same-origin paths intentionally linked but excluded from the sitemap (for example a thank-you page). |
 | `productionSeo` | no | `object` | Optional production architecture gates (server-rendered HTML, health paths, cache, security headers). |
 | `aiInstrumentation` | no | `object` | Optional AI instrumentation config (per-bot rules, ingestion endpoint path, GA4 consent-gated declaration). |
+| `aiInstrumentation.checks` | no | `object` | Per-dimension opt-outs. Keys: `ga4`, `llmsTxt`, `robotsAiPolicy`, `jsonLd`. Set a key to `false` to skip the named check. Surfaces in the gate output as a declared exception rather than a silent skip. Use for sites that deliberately ship no analytics, or that serve one of the AI Instrumentation Contract surfaces under a different mechanism the gate cannot detect. |
+| `aiInstrumentation.skip` | no | `{ reason: string }` | Whole-gate opt-out with a documented reason. Surfaces in the §19 scorecard as an accepted exception. Use sparingly. The matrix doctrine prefers per-check opt-outs over whole-gate skips. |
 
 ### Required pages
 
