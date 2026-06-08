@@ -2,6 +2,11 @@
 
 Get notified of major releases by subscribing at [siteclinic.io](https://siteclinic.io).
 
+## [Unreleased]
+
+- `fix(sonar)`: 4 launcher `main()` calls converted from `.catch()` promise chain to top-level `try { await main() } catch` (S7785). Module target is ES2022, so top-level await is supported natively by both tsx and Node 20. Smoke-tested all 4 bins from `/tmp`; behavior unchanged.
+- `chore(fallow)`: `.fallowrc.json` declares the 12 entry points (4 bin launchers, 4 src gate programs, 4 tests) so `fallow dead-code` reports zero issues instead of the previous 8 false-positive "unused files."
+
 ## [0.3.2] - 2026-06-08
 
 - `chore(hygiene)`: portfolio audit (Sonar + Fallow + Graphify) cleanup. Removed 146 em/en dashes from source, tests, and bin wrappers per the portfolio no-long-dashes rule. Added `src/__tests__/no-long-dashes.test.ts` as a drift-prevention guard on src, bin, and top-level docs.

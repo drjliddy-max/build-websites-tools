@@ -495,8 +495,10 @@ const isCli =
   import.meta.url === `file://${process.argv[1]}` ||
   import.meta.url.endsWith(process.argv[1] ?? "");
 if (isCli) {
-  main().catch((err) => {
+  try {
+    await main();
+  } catch (err) {
     console.error(err);
     process.exit(1);
-  });
+  }
 }
