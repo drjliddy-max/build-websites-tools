@@ -1,9 +1,33 @@
 {
   "name": "build-websites-tools",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "Shared build-time gates for portfolio websites — ADA WCAG 2.1 AA enforcement + Google indexing-rules enforcement + MASTER_VISIBILITY_MATRIX §17.3.1.2 AI Instrumentation Contract enforcement. Consumed by each site (siteclinic-web, ada-audit-tool site/, daily-rise, etc.) via file:../build-websites-tools dependency. Build script once, use many.",
+  "description": "Build-time enforcement gates for production websites: WCAG 2.1 AA accessibility, Google indexing rules, and the MASTER_VISIBILITY_MATRIX AI Instrumentation Contract. One package, every site, no drift.",
+  "license": "MIT",
+  "author": "John Liddy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drjliddy-max/build-websites-tools.git"
+  },
+  "homepage": "https://github.com/drjliddy-max/build-websites-tools#readme",
+  "bugs": {
+    "url": "https://github.com/drjliddy-max/build-websites-tools/issues"
+  },
+  "keywords": [
+    "wcag",
+    "wcag-2.1-aa",
+    "accessibility",
+    "a11y",
+    "axe-core",
+    "seo",
+    "ai-search",
+    "ai-instrumentation",
+    "llms-txt",
+    "json-ld",
+    "build-gates",
+    "nextjs",
+    "vercel"
+  ],
   "bin": {
     "gate-ada": "bin/gate-ada.mjs",
     "gate-seo": "bin/gate-seo.mjs",

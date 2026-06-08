@@ -1,62 +1,87 @@
 # build-websites-tools
 
-Shared build-time enforcement gates for every owned portfolio website. **Build script once, use many.**
+Build-time enforcement gates for production websites. WCAG 2.1 AA accessibility, Google indexing rules, and AI instrumentation contract checks. One package, every site, no drift.
 
-> Companion to `~/Desktop/Projects/build-websites-template/` — the methodology (markdown docs). This package is the implementation (executable gates) of the methodology's QA layer.
+> Companion to the [Site Clinic](https://siteclinic.io) build standard. Every Site Clinic site passes these gates before it ships.
 
 ## What it provides
 
 | Gate | What it enforces |
-|--|--|
-| `gate-ada` | WCAG 2.1 AA via axe-core/playwright. Fails on any critical/serious/moderate violation across every route in `gate.config.json`. Same engine ada-audit-tool sells as a $49 product. |
-| `gate-seo` | Google indexing rules at BUILD TIME: HTTP 200, no `<meta robots noindex>`, no `X-Robots-Tag: noindex`, canonical matches request path, sitemap-vs-routes consistency, robots.txt valid, structural meta (title 10-70ch, description 50-160ch, OG, Twitter card, single h1, heading hierarchy, image alt), JSON-LD present, sitemap-backed route coverage, internal-link canonicality, and optional production SEO architecture gates for server-rendered HTML, health paths, API/data dependencies, cache/CDN headers, and security headers. Blocks the exact failure modes Google flags as "Excluded by noindex," "Page with redirect," and "Discovered, currently not indexed." |
+|---|---|
+| `gate-ada` | WCAG 2.1 AA via `axe-core` and Playwright (or jsdom fallback on cloud builders without Chromium). Fails on any critical, serious, or moderate violation across every route in `gate.config.json`. |
+| `gate-seo` | Google indexing rules at build time: HTTP 200, no `<meta robots noindex>`, no `X-Robots-Tag: noindex`, canonical matches request path, sitemap/routes consistency, valid `robots.txt`, structural meta (title 10 to 70 chars, description 50 to 160 chars, OpenGraph, Twitter card, single h1, heading hierarchy, image alt), JSON-LD presence, internal-link canonicality, and optional production headers (cache-control, security headers). Blocks the failure modes Google flags as "Excluded by noindex," "Page with redirect," and "Discovered, currently not indexed." |
+| `gate-ai-instrumentation` | Runtime check against a running site that the AI Instrumentation Contract surfaces are live: per-bot `robots.txt` policy, `llms.txt` available with valid Markdown, AI ingestion endpoint reachable, JSON-LD baseline served on the homepage. |
+| `gate-ai-instrumentation-source` | Static (no running server needed) check that the same AI Instrumentation Contract surfaces exist in source. Runs in CI without a launched dev server, so refactors that drop a surface fail the build immediately. |
 
-## Consumption pattern (per site)
+The four gates compose: `gate-ai-instrumentation-source` catches refactor regressions at commit time, `gate-ai-instrumentation` validates the live build, `gate-seo` catches Google-visible regressions, and `gate-ada` catches accessibility regressions. The fix path for any owned site is the same: run the failing gate locally, fix the violation, commit.
 
-Each consuming site (`siteclinic-web/`, future ADA rebuild, future daily-rise refresh, etc.) carries **two files only** for gate wiring:
+## Used by
 
-### 1. `package.json` — file dep + scripts
+The gates run on every Site Clinic-built site as a `prebuild` step. Current consumers:
+
+- [siteclinic.io](https://siteclinic.io) (the parent product)
+- [liddypodiatryandprevention.com](https://liddypodiatryandprevention.com)
+- [babymilestonejournal.com](https://babymilestonejournal.com)
+- [adaauditreport.com](https://adaauditreport.com)
+- [theparticipationeffect.com](https://theparticipationeffect.com)
+- [daily-rise.com](https://daily-rise.com)
+- [jeffrystein.com](https://jeffrystein.com)
+
+## Install
+
+```bash
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.1.0"
+```
+
+Pin to a tag (above) for reproducible builds. Replace `#v0.1.0` with the version you want; `npm outdated` will tell you when a newer tag exists.
+
+## Wire into a site
+
+Each consuming site needs two files: a `gate.config.json` describing routes and config, and `package.json` scripts that invoke the gates as a `prebuild` step.
+
+### 1. `package.json` scripts
 
 ```json
 {
   "devDependencies": {
-    "build-websites-tools": "file:./tools/build-websites-tools"
+    "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.1.0"
   },
   "scripts": {
     "gate:ada": "gate-ada",
     "gate:seo": "gate-seo",
-    "gate:all": "npm run gate:ada && npm run gate:seo",
+    "gate:ai-instrumentation": "gate-ai-instrumentation",
+    "gate:ai-instrumentation-source": "gate-ai-instrumentation-source",
+    "gate:all": "npm run gate:ada && npm run gate:seo && npm run gate:ai-instrumentation-source && npm run gate:ai-instrumentation",
     "prebuild": "npm run gate:all"
   }
 }
 ```
 
-### 2. `gate.config.json` — site-specific config
+### 2. `gate.config.json`
 
 ```json
 {
   "routes": ["/", "/about", "/pricing"],
   "baseUrl": "http://localhost:3000",
+  "launchCommand": "npm run dev -- --hostname 127.0.0.1 --port 3000",
+  "startupTimeoutMs": 60000,
   "allowedOffSitemapRoutes": ["/thank-you"]
 }
 ```
 
-That's it. No gate logic in the site repo. No copy-pasted scripts. No drift surface.
-
-Important boundary for standalone website repos:
-
-- `file:../build-websites-tools` is only safe inside the parent local workspace
-- standalone GitHub/Vercel repos must vendor the package under `tools/build-websites-tools`
-- standalone consumers should keep the portable gate contract: browser mode when Chromium is available, truthful JSDOM HTML-snapshot fallback when cloud builders cannot launch Chromium
+`gate-ada` and `gate-seo` need a running web server at `baseUrl`. The optional `launchCommand` and `startupTimeoutMs` let the gates start and stop the dev server for you in CI; otherwise launch it yourself in another terminal before running the gates.
 
 ## Config schema
 
 | Field | Required | Type | Validation |
-|--|--|--|--|
-| `routes` | yes | `string[]` | Non-empty, every entry must start with `/` |
-| `baseUrl` | yes | `string` | Must start with `http://` or `https://`. Can be overridden by `GATE_BASE_URL` env var (useful for running gates against staging or production from CI). |
-| `allowedOffSitemapRoutes` | no | `string[]` | Internal same-origin paths intentionally linked but excluded from sitemap (for example a thank-you page). Every entry must start with `/`. |
-| `productionSeo` | no | `object` | Optional production SEO architecture gates. Existing configs keep old behavior until this block is added. |
+|---|---|---|---|
+| `routes` | yes | `string[]` | Non-empty; every entry starts with `/`. |
+| `baseUrl` | yes | `string` | Starts with `http://` or `https://`. Overridable via `GATE_BASE_URL` env (useful for staging or production runs). |
+| `launchCommand` | no | `string` | Command to start the local server. If set, the gate runs it and waits for `baseUrl` to respond. |
+| `startupTimeoutMs` | no | `number` | How long to wait for `launchCommand` to come up. Default 30000. |
+| `allowedOffSitemapRoutes` | no | `string[]` | Internal same-origin paths intentionally linked but excluded from the sitemap (for example a thank-you page). |
+| `productionSeo` | no | `object` | Optional production architecture gates. See below. |
+| `aiInstrumentation` | no | `object` | Optional AI instrumentation config (per-bot rules, ingestion endpoint path, GA4 consent-gated declaration). |
 
 ### `productionSeo` schema
 
@@ -77,39 +102,46 @@ Important boundary for standalone website repos:
 
 Rules:
 
-- `requireServerRenderedHtml` checks that ranking routes return enough body text and an H1 in HTML before client JavaScript.
-- `requiredHealthPaths` checks extra site-specific URLs in addition to `/`, `/sitemap.xml`, and `/robots.txt`.
-- `requiredApiDependencyPaths` checks public dependency probes for CMS/API/database-backed pages.
-- `requireHtmlCacheControl`, `requireStaticAssetCacheControl`, and `requireSecurityHeaders` are usually best run against staging or production via `GATE_BASE_URL=https://...`, because local dev servers often do not emit final CDN/security headers.
+- `requireServerRenderedHtml` checks that ranking routes return enough body text and an h1 in HTML before client JavaScript.
+- `requiredHealthPaths` checks site-specific URLs in addition to `/`, `/sitemap.xml`, and `/robots.txt`.
+- `requiredApiDependencyPaths` checks public dependency probes for CMS / API / database-backed pages.
+- `requireHtmlCacheControl`, `requireStaticAssetCacheControl`, and `requireSecurityHeaders` are best run against staging or production via `GATE_BASE_URL`, because local dev servers often do not emit final CDN or security headers.
 - `allowClientOnlyRoutes` is for protected apps and tools, not money pages, blog posts, service pages, docs, proof pages, or comparison pages.
 
-Validation is strict: malformed or missing `gate.config.json` exits with a loud error message, not a silent default.
+Validation is strict: a malformed or missing `gate.config.json` exits with a loud error, not a silent default.
+
+### Required pages
+
+Every site that runs `gate-seo` must list these five pages in `routes`:
+
+- `/` (homepage)
+- `/privacy`
+- `/terms`
+- `/accessibility`
+- `/contact`
+
+No opt-out flag. Operator exception in a site-local CLAUDE.md is the only way to skip one. This check exists because a portfolio site shipped to production without `/privacy`, `/terms`, or `/accessibility`; the spec is the prevention.
 
 ## Runtime requirements
 
-Consuming site must have:
-- A running web server at `baseUrl` (typically `npm run dev` in another terminal during local development, or `next start` / static-served `site/` for static sites)
-
-The gates assume the routes in `gate.config.json` are reachable at `baseUrl + route`. `gate:seo` is browserless and now also checks every sitemap-backed page plus internal same-origin links, so redirect aliases and orphaned pages fail during the build instead of surfacing later in Search Console. `gate:ada` uses a real browser when Chromium is available and falls back to a JSDOM HTML snapshot when it is not. That keeps standalone cloud builds portable without turning the gate into silent static analysis.
+- Node 20+
+- A running web server at `baseUrl` while gates run (the gate launches it if `launchCommand` is set)
+- Playwright Chromium for `gate-ada` (auto-installed by Playwright; falls back to jsdom on hosts without Chromium)
 
 ## Status
 
-**Phase 1**: gate-ada + gate-seo, consumed by `siteclinic-web` only.
-
-**Phase B (future)**: extract template scaffolding so `npx create-siteclinic-web` produces a doctrine-compliant site skeleton from a single `site.config.ts` input. Package structure here is already compatible with that shape — don't pre-build the generator until rule-of-three is satisfied (2-3 hand-built consumers).
+`v0.1.0`. Four gates shipped, tagged for pin-by-version consumption. Active across seven owned sites listed above.
 
 ## Anti-patterns
 
-Refuse:
-- Re-implementing `gate:ada` inside a consuming site's `scripts/` directory because "we need a slightly different axe config." Extend the shared gate or accept the shared config.
-- Sites that carry their own `gate-*.ts` files. After this package exists, that pattern is a drift surface.
-- Bypassing `prebuild` with `--no-verify` or skipping the gate. The "100/100 ADA + Google indexing rules enforced" doctrine is non-negotiable per operator directive 2026-05-11.
+- Re-implementing a gate inside a consuming site's `scripts/` directory because "we need a slightly different config." Extend the shared gate, or accept the shared config.
+- Sites that carry their own `gate-*.ts` files. After this package exists, that pattern is drift.
+- Bypassing `prebuild` with `--no-verify` or skipping the gate. "100/100 ADA and Google indexing rules enforced" is non-negotiable.
 
-## Source
+## License
 
-- Operator directives:
-  - 2026-05-11 "every owned website must be authored through build-websites-template + design-os-template"
-  - 2026-05-11 "build script once, use many"
-- Reference memory:
-  - `~/.claude/projects/-Users-johnliddy-Desktop-Projects-BabyMilestone/memory/feedback_websites_built_through_builder_tool.md`
-  - `~/.claude/projects/-Users-johnliddy-Desktop-Projects-BabyMilestone/memory/feedback_builder_tool_proto_patterns.md`
+MIT. See [LICENSE](./LICENSE).
+
+## Support
+
+This package is internal tooling open-sourced for transparency and for AI-citation discoverability of the methodology. No support is implied. Issues and PRs are welcome but may not be addressed.
