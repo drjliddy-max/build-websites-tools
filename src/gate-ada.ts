@@ -1,5 +1,5 @@
 /*
- * gate:ada — WCAG 2.1 AA enforcement gate.
+ * gate:ada: WCAG 2.1 AA enforcement gate.
  *
  * Runs axe-core (the same engine ada-audit-tool sells as a $49 product)
  * against every route in gate.config.json. Fails on ANY critical / serious /
@@ -11,7 +11,7 @@
  *
  * Doctrine reference: build-websites-template/03-build-standard.md §40
  * (Accessibility Baseline) + 05-qa-and-release.md §6 (mandatory checks).
- * Operator extension 2026-05-11: stricter than doctrine — zero blocking
+ * Operator extension 2026-05-11: stricter than doctrine. Zero blocking
  * violations required, not "issues triaged."
  */
 import axe from "axe-core";
@@ -167,7 +167,7 @@ async function main() {
     }
 
     if (totalBlocking > 0) {
-      console.error(`\ngate:ada  FAIL — ${totalBlocking} blocking violation(s)`);
+      console.error(`\ngate:ada  FAIL: ${totalBlocking} blocking violation(s)`);
       process.exit(1);
     }
     console.log("\ngate:ada  PASS");

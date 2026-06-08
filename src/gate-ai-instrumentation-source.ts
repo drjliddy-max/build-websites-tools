@@ -1,9 +1,9 @@
 /*
- * gate:ai-instrumentation-source — STATIC source-level prevention gate.
+ * gate:ai-instrumentation-source: STATIC source-level prevention gate.
  *
  * Companion to gate:ai-instrumentation (live HTTP probe). This gate
  * runs against the consumer site's SOURCE CODE, not the deployed
- * surface — catches the matrix §17.3.1.2 refactor regression class
+ * surface. Catches the matrix §17.3.1.2 refactor regression class
  * BEFORE the build attempts to deploy.
  *
  * Specified by MASTER_VISIBILITY_MATRIX §17.3.1.2 + the 2026-06-05
@@ -23,29 +23,29 @@
  *
  *   - siteclinic-web + babymilestonejournal-web 2026-06-05: route
  *     handler being replaced by public/robots.txt mid-refactor.
- *     Migration preserved AI policy by coincidence — but no
+ *     Migration preserved AI policy by coincidence, but no
  *     automated guarantee.
  *
  * Three invariants this gate enforces at COMMIT TIME (no server
  * required):
  *
- *   1. ROBOTS  — exactly one robots.txt serving mechanism present
+ *   1. ROBOTS: exactly one robots.txt serving mechanism present
  *      (public/robots.txt OR src/app/robots.txt/route.ts OR
  *      src/app/robots.ts MetadataRoute), and the chosen mechanism
  *      contains the matrix-required declared-policy comment block.
  *      MetadataRoute.Robots is REJECTED because it cannot emit
- *      comments — the canonical signal site-monitor's
+ *      comments, which are the canonical signal site-monitor's
  *      detectRobotsAiPolicy scans for.
  *
- *   2. LLMS    — exactly one /llms.txt serving mechanism present
+ *   2. LLMS: exactly one /llms.txt serving mechanism present
  *      (public/llms.txt OR src/app/llms.txt/route.ts), and the
  *      chosen mechanism has a Markdown heading.
  *
- *   3. JSONLD  — homepage source contains application/ld+json with
+ *   3. JSONLD: homepage source contains application/ld+json with
  *      at minimum Organization or WebSite @type. Spec §17.3.1.2
  *      #JSON-LD baseline.
  *
- * The gate is framework-agnostic — works for Next.js (App + Pages),
+ * The gate is framework-agnostic, working for Next.js (App + Pages),
  * pure static HTML, Vite, Astro. Detects whichever pattern is
  * present. Operator may declare exceptions via the same
  * `aiInstrumentation` block in gate.config.json that gate-ai-
@@ -67,7 +67,7 @@ const REQUIRED_JSONLD_TYPES = ["Organization", "WebSite"] as const;
 // The leading character ensures we don't false-positive on a literal
 // "AI policy" substring inside a URL or longer comment.
 const ROBOTS_AI_POLICY_PATTERN =
-  /(?:^|[\s\\\`])#\s*AI policy(?:\s|$)/im;
+  /(?:^|[\s\\`])#\s*AI policy(?:\s|$)/im;
 
 export type CheckResult = {
   name: string;
@@ -92,7 +92,7 @@ export interface RobotsSource {
   file: string;
   /** Which serving mechanism this file uses. */
   kind: "static" | "route-handler" | "metadata-route";
-  /** Raw file contents — used to verify matrix signal. */
+  /** Raw file contents, used to verify matrix signal. */
   body: string;
 }
 
@@ -142,14 +142,14 @@ export function evaluateRobots(sources: RobotsSource[]): CheckResult {
       name: "robots",
       pass: false,
       detail:
-        "no robots.txt source found — expected one of: public/robots.txt, site/robots.txt, src/app/robots.txt/route.ts, src/app/robots.ts, or apps/web/* equivalent",
+        "no robots.txt source found; expected one of: public/robots.txt, site/robots.txt, src/app/robots.txt/route.ts, src/app/robots.ts, or apps/web/* equivalent",
     };
   }
   if (sources.length > 1) {
     return {
       name: "robots",
       pass: false,
-      detail: `multiple robots.txt mechanisms — Next.js will return 500. Pick ONE and delete the others. Found: ${sources.map((s) => s.file).join(", ")}`,
+      detail: `multiple robots.txt mechanisms; Next.js will return 500. Pick ONE and delete the others. Found: ${sources.map((s) => s.file).join(", ")}`,
     };
   }
   const [src] = sources;
@@ -164,13 +164,13 @@ export function evaluateRobots(sources: RobotsSource[]): CheckResult {
     return {
       name: "robots",
       pass: false,
-      detail: `${src.file} missing declared AI policy comment block — expected '# AI policy …' header per matrix §17.3.1.2`,
+      detail: `${src.file} missing declared AI policy comment block; expected '# AI policy …' header per matrix §17.3.1.2`,
     };
   }
   return {
     name: "robots",
     pass: true,
-    detail: `${src.file} (${src.kind}) — declared AI policy present`,
+    detail: `${src.file} (${src.kind}): declared AI policy present`,
   };
 }
 
@@ -214,7 +214,7 @@ export function evaluateLlms(sources: LlmsSource[]): CheckResult {
       name: "llms",
       pass: false,
       detail:
-        "no llms.txt source found — expected one of: public/llms.txt, site/llms.txt, src/app/llms.txt/route.ts, or apps/web/* equivalent",
+        "no llms.txt source found; expected one of: public/llms.txt, site/llms.txt, src/app/llms.txt/route.ts, or apps/web/* equivalent",
     };
   }
   if (sources.length > 1) {
@@ -230,7 +230,7 @@ export function evaluateLlms(sources: LlmsSource[]): CheckResult {
   // Both reduce to: any line starting with "# heading".
   // Heading may sit at start-of-line (static file) OR follow whitespace,
   // backtick, or escaped `\n` inside a template literal (route handler).
-  if (!/(?:^|[\s\\\`])#\s+\S/.test(src.body)) {
+  if (!/(?:^|[\s\\`])#\s+\S/.test(src.body)) {
     return {
       name: "llms",
       pass: false,
@@ -240,7 +240,7 @@ export function evaluateLlms(sources: LlmsSource[]): CheckResult {
   return {
     name: "llms",
     pass: true,
-    detail: `${src.file} (${src.kind}) — Markdown heading present`,
+    detail: `${src.file} (${src.kind}): Markdown heading present`,
   };
 }
 
@@ -266,7 +266,7 @@ const HOMEPAGE_CANDIDATES = [
  *   - the app-router layout.tsx wrapping the homepage
  *   - a shared <JsonLd /> or <Schema /> component imported by either
  *
- * Scan all of these as a single corpus — if Organization or WebSite
+ * Scan all of these as a single corpus. If Organization or WebSite
  * appears anywhere in the homepage's surrounding source tree, the
  * matrix signal is present in production. This catches the actual
  * shipped pattern across the owned portfolio without false-positive
@@ -377,7 +377,7 @@ export function evaluateHomepageJsonLd({ cwd }: SiteRoot): CheckResult {
     return {
       name: "jsonLdSource",
       pass: false,
-      detail: `JSON-LD types found (${summary}) but neither Organization nor WebSite — at least one required by §17.3.1.2`,
+      detail: `JSON-LD types found (${summary}) but neither Organization nor WebSite; at least one required by §17.3.1.2`,
     };
   }
   const summary = [...typesPerFile.entries()]
@@ -448,7 +448,7 @@ async function main(): Promise<void> {
 
   if (config.skip) {
     console.log(
-      `gate:ai-instrumentation-source  SKIPPED — ${config.skip.reason}`,
+      `gate:ai-instrumentation-source  SKIPPED: ${config.skip.reason}`,
     );
     return;
   }
@@ -469,7 +469,7 @@ async function main(): Promise<void> {
   const failed = filtered.filter((c) => !c.pass);
   if (failed.length > 0) {
     console.error(
-      `\ngate:ai-instrumentation-source  FAIL — ${failed.length}/${filtered.length} invariant(s) violated`,
+      `\ngate:ai-instrumentation-source  FAIL: ${failed.length}/${filtered.length} invariant(s) violated`,
     );
     console.error(
       "Spec: MASTER_VISIBILITY_MATRIX §17.3.1.2 +",
@@ -479,7 +479,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    `\ngate:ai-instrumentation-source  PASS — ${filtered.length}/${filtered.length} source invariant(s) verified`,
+    `\ngate:ai-instrumentation-source  PASS: ${filtered.length}/${filtered.length} source invariant(s) verified`,
   );
 }
 

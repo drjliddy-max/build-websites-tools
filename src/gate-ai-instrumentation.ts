@@ -1,13 +1,13 @@
 /*
- * gate:ai-instrumentation — AI visibility readiness gate.
+ * gate:ai-instrumentation: AI visibility readiness gate.
  *
  * Specified by MASTER_VISIBILITY_MATRIX §17.3.1.2 (AI Instrumentation
  * Contract). Verifies a deployed site exposes the 4 build-time-checkable
  * dimensions of the contract:
  *
- *   1. GA4 G-tag  — Google Analytics 4 measurement ID + gtag bootstrap
+ *   1. GA4 G-tag: Google Analytics 4 measurement ID + gtag bootstrap
  *      in homepage HTML.
- *   2. /llms.txt  — declarative AI agent index, Markdown shape, 200 OK.
+ *   2. /llms.txt: declarative AI agent index, Markdown shape, 200 OK.
  *   3. /robots.txt with declared AI policy comment block (the canonical
  *      signal site-monitor's detectRobotsAiPolicy scans for; bare
  *      allow-all robots.txt fails the gate).
@@ -16,7 +16,7 @@
  *      §3.1.3 layer 7 scanner-correctness rule was added to prevent).
  *
  * Crawler logging (Surface 2) is verified at RUNTIME against the
- * deployed /api/ai-log endpoint, NOT at build time — there's no static
+ * deployed /api/ai-log endpoint, NOT at build time. There's no static
  * artifact that proves the route handler is wired correctly. Runtime
  * verification lives in site-monitor's health checks.
  *
@@ -46,10 +46,10 @@ const GA4_LOADER_PATTERN =
   /googletagmanager\.com\/gtag\/js\?id=G-[A-Z0-9]{6,}/;
 // Matches the canonical declared-policy comment block opener in both
 // shipped forms across the owned-property portfolio:
-//   - "# AI policy for <site> — declared <date>"  (5 sites: jeffrystein,
+//   - "# AI policy for <site>: declared <date>"  (5 sites: jeffrystein,
 //     adaauditreport, babymilestonejournal, daily-rise, liddy-podiatry)
-//   - "# AI policy — declared <date>"             (siteclinic.io)
-//   - "# AI policy for theparticipationeffect.com — declared <date>"
+//   - "# AI policy: declared <date>"             (siteclinic.io)
+//   - "# AI policy for theparticipationeffect.com: declared <date>"
 // Anchored to start-of-line so a literal "AI policy" mention in a sitemap
 // URL or comment doesn't false-positive.
 const ROBOTS_AI_POLICY_PATTERN = /^#\s*AI policy(?:\s|$)/im;
@@ -80,7 +80,7 @@ export function detectGA4(html: string): CheckResult {
     name: "ga4",
     pass: false,
     detail:
-      "no GA4 measurement ID found — expected gtag('config', 'G-…') or gtag/js?id=G-…",
+      "no GA4 measurement ID found; expected gtag('config', 'G-…') or gtag/js?id=G-…",
   };
 }
 
@@ -99,7 +99,7 @@ export function isMarkdownShaped(body: string): boolean {
  * Detect declared AI policy comment block in robots.txt body.
  * Spec per §17.3.1.2 #robots.txt AI policy: a comment block declaring
  * the AI policy decision date and per-bot stance. Pattern matches
- * `# AI policy for <domain>` as the canonical signal — same shape
+ * `# AI policy for <domain>` as the canonical signal. Same shape
  * shipped by siteclinic-web, jeffrystein-web, adaauditreport-web,
  * babymilestonejournal-web, daily-rise, liddy-podiatry-site,
  * participation-effect-site as of 2026-06-04.
@@ -132,7 +132,7 @@ export function extractJsonLdTypes(html: string): string[] {
       const parsed = JSON.parse(text);
       collectTypes(parsed, types);
     } catch {
-      // Malformed JSON-LD — caller sees missing types + reports defect.
+      // Malformed JSON-LD: caller sees missing types + reports defect.
     }
   }
   return [...types];
@@ -167,7 +167,7 @@ export function evaluateJsonLd(html: string): CheckResult {
       name: "jsonLd",
       pass: false,
       detail:
-        "no parse-clean JSON-LD on homepage — expected at minimum Organization or WebSite",
+        "no parse-clean JSON-LD on homepage; expected at minimum Organization or WebSite",
     };
   }
   const hasRequired = REQUIRED_JSONLD_TYPES.some((t) => types.includes(t));
@@ -175,7 +175,7 @@ export function evaluateJsonLd(html: string): CheckResult {
     return {
       name: "jsonLd",
       pass: false,
-      detail: `JSON-LD types found [${types.join(", ")}] but neither Organization nor WebSite — at least one is required by §17.3.1.2`,
+      detail: `JSON-LD types found [${types.join(", ")}] but neither Organization nor WebSite; at least one is required by §17.3.1.2`,
     };
   }
   return {
@@ -210,7 +210,7 @@ async function evaluateLlmsTxt(baseUrl: string): Promise<CheckResult> {
     return {
       name: "llmsTxt",
       pass: false,
-      detail: `/llms.txt returned HTTP ${result.status} — expected 200`,
+      detail: `/llms.txt returned HTTP ${result.status}; expected 200`,
     };
   }
   if (!isMarkdownShaped(result.body)) {
@@ -238,7 +238,7 @@ async function evaluateRobotsAiPolicy(baseUrl: string): Promise<CheckResult> {
     return {
       name: "robotsAiPolicy",
       pass: false,
-      detail: `/robots.txt returned HTTP ${result.status} — expected 200`,
+      detail: `/robots.txt returned HTTP ${result.status}; expected 200`,
     };
   }
   if (!hasRobotsAiPolicy(result.body)) {
@@ -246,7 +246,7 @@ async function evaluateRobotsAiPolicy(baseUrl: string): Promise<CheckResult> {
       name: "robotsAiPolicy",
       pass: false,
       detail:
-        "/robots.txt missing declared AI policy comment block — expected '# AI policy for …' header per §17.3.1.2",
+        "/robots.txt missing declared AI policy comment block; expected '# AI policy for …' header per §17.3.1.2",
     };
   }
   return {
@@ -263,7 +263,7 @@ async function evaluateHomepage(
   try {
     const res = await fetch(baseUrl, { redirect: "follow" });
     if (res.status !== 200) {
-      const detail = `homepage returned HTTP ${res.status} — expected 200`;
+      const detail = `homepage returned HTTP ${res.status}; expected 200`;
       return {
         ga4: { name: "ga4", pass: false, detail },
         jsonLd: { name: "jsonLd", pass: false, detail },
@@ -326,7 +326,7 @@ interface AiInstrumentationConfig {
    * declares the deployment as consent-gated; the gate logs the
    * declared exception + does not fail the GA4 check.
    *
-   * Required field: `measurementId` — the G-XXXXXXX ID the consent
+   * Required field: `measurementId`. The G-XXXXXXX ID the consent
    * gate injects. Surfaces in the §19 scorecard so the dashboard
    * shows "GA4 consent-gated (measurementId)" rather than "missing".
    */
@@ -388,7 +388,7 @@ function loadMinimalConfig(): {
   const baseUrl = envOverride || configBaseUrl;
   if (!/^https?:\/\/[^\s]+$/.test(baseUrl)) {
     console.error(
-      `✗ baseUrl required for AI instrumentation probe — set GATE_BASE_URL env var or gate.config.json baseUrl`,
+      `✗ baseUrl required for AI instrumentation probe; set GATE_BASE_URL env var or gate.config.json baseUrl`,
     );
     process.exit(1);
   }
@@ -416,10 +416,10 @@ async function main(): Promise<void> {
 
   if (aiConfig.skip) {
     console.log(
-      `gate:ai-instrumentation  SKIPPED — ${aiConfig.skip.reason}`,
+      `gate:ai-instrumentation  SKIPPED: ${aiConfig.skip.reason}`,
     );
     console.log(
-      "(declared exception per §17.3.1.2 — still surfaces in §19 scorecard as accepted exception)",
+      "(declared exception per §17.3.1.2; still surfaces in §19 scorecard as accepted exception)",
     );
     return;
   }
@@ -452,7 +452,7 @@ async function main(): Promise<void> {
         return {
           name: "ga4",
           pass: true,
-          detail: `consent-gated declared exception (measurementId=${consentGated.measurementId}) — script injects post-consent`,
+          detail: `consent-gated declared exception (measurementId=${consentGated.measurementId}); script injects post-consent`,
         };
       }
       return c;
@@ -469,7 +469,7 @@ async function main(): Promise<void> {
     const failed = filtered.filter((c) => !c.pass);
     if (failed.length > 0) {
       console.error(
-        `\ngate:ai-instrumentation  FAIL — ${failed.length}/${filtered.length} dimension(s) failed`,
+        `\ngate:ai-instrumentation  FAIL: ${failed.length}/${filtered.length} dimension(s) failed`,
       );
       console.error(
         "Spec: MASTER_VISIBILITY_MATRIX §17.3.1.2 AI Instrumentation Contract",
@@ -478,10 +478,10 @@ async function main(): Promise<void> {
       return;
     }
     console.log(
-      `\ngate:ai-instrumentation  PASS — ${filtered.length}/${filtered.length} dimension(s) verified`,
+      `\ngate:ai-instrumentation  PASS: ${filtered.length}/${filtered.length} dimension(s) verified`,
     );
   } catch (err) {
-    console.error(`\ngate:ai-instrumentation  ERROR — ${(err as Error).message}`);
+    console.error(`\ngate:ai-instrumentation  ERROR: ${(err as Error).message}`);
     process.exitCode = 1;
   } finally {
     await cleanup?.();

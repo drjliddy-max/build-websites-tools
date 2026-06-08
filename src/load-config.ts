@@ -2,7 +2,7 @@
  * Loads and validates gate.config.json from the CONSUMING site's cwd.
  *
  * Strict: fails loudly with a clear message on missing file, invalid JSON,
- * missing fields, or malformed values. No silent defaults — a missing or
+ * missing fields, or malformed values. No silent defaults. A missing or
  * malformed config is a build failure, not a "fall back to /." Sites that
  * skip the config don't get gates.
  */
@@ -89,7 +89,7 @@ export function loadGateConfig(): GateConfig {
   }
   if (!Array.isArray(obj.routes) || obj.routes.length === 0) {
     console.error(
-      `✗ ${configPath}: "routes" must be a non-empty array — got ${JSON.stringify(obj.routes)}`,
+      `✗ ${configPath}: "routes" must be a non-empty array, got${JSON.stringify(obj.routes)}`,
     );
     process.exit(1);
   }
@@ -98,14 +98,14 @@ export function loadGateConfig(): GateConfig {
   );
   if (badRoutes.length > 0) {
     console.error(
-      `✗ ${configPath}: every route must be a string starting with "/" — bad entries: ${JSON.stringify(badRoutes)}`,
+      `✗ ${configPath}: every route must be a string starting with "/"; bad entries:${JSON.stringify(badRoutes)}`,
     );
     process.exit(1);
   }
 
   /*
-   * Required-pages check — added 2026-06-05 after jeffrystein-web shipped
-   * to production without /privacy, /terms, or /accessibility. The gate
+   * Required-pages check (added 2026-06-05 after jeffrystein-web shipped
+   * to production without /privacy, /terms, or /accessibility). The gate
    * was scanning whatever was listed in routes, but never verifying that
    * the doctrine-required pages were among them. Result: false-green
    * builds on legally-incomplete sites.
@@ -113,11 +113,11 @@ export function loadGateConfig(): GateConfig {
    * Per build-websites-template/03-build-standard.md, these five pages
    * are REQUIRED on every owned marketing site:
    *
-   *   /                — homepage
-   *   /privacy         — privacy policy
-   *   /terms           — terms of service
-   *   /accessibility   — accessibility statement (WCAG + ADA disclosure)
-   *   /contact         — direct-inquiry surface
+   *   /                homepage
+   *   /privacy         privacy policy
+   *   /terms           terms of service
+   *   /accessibility   accessibility statement (WCAG + ADA disclosure)
+   *   /contact         direct-inquiry surface
    *
    * No opt-out flag. Opt-outs are how sites end up legally incomplete.
    * If a site genuinely doesn't need /contact (e.g., book-only with no
@@ -138,7 +138,7 @@ export function loadGateConfig(): GateConfig {
   );
   if (missingRequired.length > 0) {
     console.error(
-      `✗ ${configPath}: missing required page(s) from routes — ${JSON.stringify(missingRequired)}`,
+      `✗ ${configPath}: missing required page(s) from routes: ${JSON.stringify(missingRequired)}`,
     );
     console.error(
       `  Per build-websites-template/03-build-standard.md, every owned marketing site must`,
@@ -166,7 +166,7 @@ export function loadGateConfig(): GateConfig {
     !/^https?:\/\/[^\s]+$/.test(obj.baseUrl)
   ) {
     console.error(
-      `✗ ${configPath}: "baseUrl" must be an http(s) URL — got ${JSON.stringify(obj.baseUrl)}`,
+      `✗ ${configPath}: "baseUrl" must be an http(s) URL, got${JSON.stringify(obj.baseUrl)}`,
     );
     process.exit(1);
   }
@@ -175,7 +175,7 @@ export function loadGateConfig(): GateConfig {
   const envOverride = process.env.GATE_BASE_URL;
   if (envOverride && !/^https?:\/\/[^\s]+$/.test(envOverride)) {
     console.error(
-      `✗ GATE_BASE_URL env var must be an http(s) URL — got ${JSON.stringify(envOverride)}`,
+      `✗ GATE_BASE_URL env var must be an http(s) URL, got${JSON.stringify(envOverride)}`,
     );
     process.exit(1);
   }
@@ -186,7 +186,7 @@ export function loadGateConfig(): GateConfig {
     typeof obj.launchCommand !== "string"
   ) {
     console.error(
-      `✗ ${configPath}: "launchCommand" must be a string when provided — got ${JSON.stringify(obj.launchCommand)}`,
+      `✗ ${configPath}: "launchCommand" must be a string when provided, got${JSON.stringify(obj.launchCommand)}`,
     );
     process.exit(1);
   }
@@ -197,7 +197,7 @@ export function loadGateConfig(): GateConfig {
     (!Number.isInteger(obj.startupTimeoutMs) || Number(obj.startupTimeoutMs) <= 0)
   ) {
     console.error(
-      `✗ ${configPath}: "startupTimeoutMs" must be a positive integer when provided — got ${JSON.stringify(obj.startupTimeoutMs)}`,
+      `✗ ${configPath}: "startupTimeoutMs" must be a positive integer when provided, got${JSON.stringify(obj.startupTimeoutMs)}`,
     );
     process.exit(1);
   }
@@ -208,7 +208,7 @@ export function loadGateConfig(): GateConfig {
   ) {
     if (!Array.isArray(obj.allowedOffSitemapRoutes)) {
       console.error(
-        `✗ ${configPath}: "allowedOffSitemapRoutes" must be an array when provided — got ${JSON.stringify(obj.allowedOffSitemapRoutes)}`,
+        `✗ ${configPath}: "allowedOffSitemapRoutes" must be an array when provided, got${JSON.stringify(obj.allowedOffSitemapRoutes)}`,
       );
       process.exit(1);
     }
@@ -218,7 +218,7 @@ export function loadGateConfig(): GateConfig {
     );
     if (badAllowedOffSitemapRoutes.length > 0) {
       console.error(
-        `✗ ${configPath}: every allowedOffSitemapRoutes entry must be a string starting with "/" — bad entries: ${JSON.stringify(badAllowedOffSitemapRoutes)}`,
+        `✗ ${configPath}: every allowedOffSitemapRoutes entry must be a string starting with "/"; bad entries:${JSON.stringify(badAllowedOffSitemapRoutes)}`,
       );
       process.exit(1);
     }
@@ -227,7 +227,7 @@ export function loadGateConfig(): GateConfig {
   if ("expectedRedirects" in obj && obj.expectedRedirects !== undefined) {
     if (!Array.isArray(obj.expectedRedirects)) {
       console.error(
-        `✗ ${configPath}: "expectedRedirects" must be an array when provided — got ${JSON.stringify(obj.expectedRedirects)}`,
+        `✗ ${configPath}: "expectedRedirects" must be an array when provided, got${JSON.stringify(obj.expectedRedirects)}`,
       );
       process.exit(1);
     }
@@ -235,7 +235,7 @@ export function loadGateConfig(): GateConfig {
     for (const entry of obj.expectedRedirects) {
       if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
         console.error(
-          `✗ ${configPath}: each expectedRedirects entry must be an object — got ${JSON.stringify(entry)}`,
+          `✗ ${configPath}: each expectedRedirects entry must be an object, got${JSON.stringify(entry)}`,
         );
         process.exit(1);
       }
@@ -243,7 +243,7 @@ export function loadGateConfig(): GateConfig {
       const redirect = entry as Record<string, unknown>;
       if (typeof redirect.source !== "string" || !redirect.source.startsWith("/")) {
         console.error(
-          `✗ ${configPath}: expectedRedirects.source must start with "/" — got ${JSON.stringify(redirect.source)}`,
+          `✗ ${configPath}: expectedRedirects.source must start with "/", got${JSON.stringify(redirect.source)}`,
         );
         process.exit(1);
       }
@@ -252,7 +252,7 @@ export function loadGateConfig(): GateConfig {
         !redirect.destination.startsWith("/")
       ) {
         console.error(
-          `✗ ${configPath}: expectedRedirects.destination must start with "/" — got ${JSON.stringify(redirect.destination)}`,
+          `✗ ${configPath}: expectedRedirects.destination must start with "/", got${JSON.stringify(redirect.destination)}`,
         );
         process.exit(1);
       }
@@ -262,7 +262,7 @@ export function loadGateConfig(): GateConfig {
         Number(redirect.status) > 399
       ) {
         console.error(
-          `✗ ${configPath}: expectedRedirects.status must be a 3xx integer — got ${JSON.stringify(redirect.status)}`,
+          `✗ ${configPath}: expectedRedirects.status must be a 3xx integer, got${JSON.stringify(redirect.status)}`,
         );
         process.exit(1);
       }
@@ -276,7 +276,7 @@ export function loadGateConfig(): GateConfig {
       Array.isArray(obj.productionSeo)
     ) {
       console.error(
-        `✗ ${configPath}: "productionSeo" must be an object when provided — got ${JSON.stringify(obj.productionSeo)}`,
+        `✗ ${configPath}: "productionSeo" must be an object when provided, got${JSON.stringify(obj.productionSeo)}`,
       );
       process.exit(1);
     }
@@ -292,7 +292,7 @@ export function loadGateConfig(): GateConfig {
       if (value === undefined) continue;
       if (!Array.isArray(value)) {
         console.error(
-          `✗ ${configPath}: "productionSeo.${key}" must be an array when provided — got ${JSON.stringify(value)}`,
+          `✗ ${configPath}: "productionSeo.${key}" must be an array when provided, got${JSON.stringify(value)}`,
         );
         process.exit(1);
       }
@@ -301,7 +301,7 @@ export function loadGateConfig(): GateConfig {
       );
       if (badPaths.length > 0) {
         console.error(
-          `✗ ${configPath}: every productionSeo.${key} entry must be a string starting with "/" — bad entries: ${JSON.stringify(badPaths)}`,
+          `✗ ${configPath}: every productionSeo.${key} entry must be a string starting with "/"; bad entries:${JSON.stringify(badPaths)}`,
         );
         process.exit(1);
       }
@@ -315,7 +315,7 @@ export function loadGateConfig(): GateConfig {
       )
     ) {
       console.error(
-        `✗ ${configPath}: "productionSeo.minServerRenderedTextChars" must be a non-negative integer when provided — got ${JSON.stringify(productionSeo.minServerRenderedTextChars)}`,
+        `✗ ${configPath}: "productionSeo.minServerRenderedTextChars" must be a non-negative integer when provided, got${JSON.stringify(productionSeo.minServerRenderedTextChars)}`,
       );
       process.exit(1);
     }
@@ -329,7 +329,7 @@ export function loadGateConfig(): GateConfig {
       const value = productionSeo[key];
       if (value !== undefined && typeof value !== "boolean") {
         console.error(
-          `✗ ${configPath}: "productionSeo.${key}" must be a boolean when provided — got ${JSON.stringify(value)}`,
+          `✗ ${configPath}: "productionSeo.${key}" must be a boolean when provided, got${JSON.stringify(value)}`,
         );
         process.exit(1);
       }

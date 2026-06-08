@@ -1,5 +1,5 @@
 /*
- * gate:seo — Google indexing rules enforcement gate.
+ * gate:seo: Google indexing rules enforcement gate.
  *
  * Validates every configured canonical route plus every sitemap-backed route
  * against the structural SEO rules Google uses for crawling + indexing +
@@ -193,7 +193,7 @@ async function checkRoute(route: string, baseUrl: string, config: GateConfig): P
     const lang = document.documentElement.getAttribute("lang");
     push("html lang", lang === "en", `lang="${lang ?? "(missing)"}"`);
 
-    // 2. <title> present, 10–70 chars
+    // 2. <title> present, 10 to 70 chars
     const title = document.title;
     push(
       "title",
@@ -201,7 +201,7 @@ async function checkRoute(route: string, baseUrl: string, config: GateConfig): P
       `"${title}" (${title.length} chars)`,
     );
 
-    // 3. meta description present, 50–160 chars
+    // 3. meta description present, 50 to 160 chars
     const desc = document
       .querySelector('meta[name="description"]')
       ?.getAttribute("content");
@@ -243,11 +243,10 @@ async function checkRoute(route: string, baseUrl: string, config: GateConfig): P
 
     // 8. Exactly one <h1>
     const h1s = document.querySelectorAll("h1");
-    push(
-      "single h1",
-      h1s.length === 1,
-      `${h1s.length} found${h1s.length === 1 ? `: "${h1s[0].textContent?.slice(0, 50)}…"` : ""}`,
-    );
+    const h1Preview = h1s.length === 1
+      ? `: "${h1s[0].textContent?.slice(0, 50)}…"`
+      : "";
+    push("single h1", h1s.length === 1, `${h1s.length} found${h1Preview}`);
 
     // 9. Heading hierarchy (no skipped levels)
     const headings = Array.from(
@@ -466,7 +465,7 @@ async function main() {
       );
     }
 
-    // Per-route checks — HTTP status, headers, content
+    // Per-route checks: HTTP status, headers, content
     for (const route of effectiveRoutes) {
       process.stdout.write(`gate:seo  ${baseUrl}${route}  …`);
       const url = `${baseUrl}${route}`;
@@ -680,7 +679,7 @@ async function main() {
     }
 
     if (totalFailures > 0) {
-      console.error(`\ngate:seo  FAIL — ${totalFailures} failure(s)`);
+      console.error(`\ngate:seo  FAIL: ${totalFailures} failure(s)`);
       process.exit(1);
     }
     console.log("\ngate:seo  PASS");
