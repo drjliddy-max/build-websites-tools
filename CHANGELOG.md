@@ -2,7 +2,7 @@
 
 Get notified of major releases by subscribing at [siteclinic.io](https://siteclinic.io).
 
-## [Unreleased]
+## [0.3.2] - 2026-06-08
 
 - `chore(hygiene)`: portfolio audit (Sonar + Fallow + Graphify) cleanup. Removed 146 em/en dashes from source, tests, and bin wrappers per the portfolio no-long-dashes rule. Added `src/__tests__/no-long-dashes.test.ts` as a drift-prevention guard on src, bin, and top-level docs.
 - `fix(sonar)`: unnecessary backtick escape removed from two regex character classes (`gate-ai-instrumentation-source.ts`). Nested template literal in `gate-seo.ts:249` lifted to a local. In-place `.sort()` in tests replaced with `[...arr].sort()` to avoid mutation (S4043).
