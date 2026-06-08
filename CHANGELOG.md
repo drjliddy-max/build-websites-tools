@@ -6,6 +6,8 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 - `fix(sonar)`: 4 launcher `main()` calls converted from `.catch()` promise chain to top-level `try { await main() } catch` (S7785). Module target is ES2022, so top-level await is supported natively by both tsx and Node 20. Smoke-tested all 4 bins from `/tmp`; behavior unchanged.
 - `chore(fallow)`: `.fallowrc.json` declares the 12 entry points (4 bin launchers, 4 src gate programs, 4 tests) so `fallow dead-code` reports zero issues instead of the previous 8 false-positive "unused files."
+- `docs(readme)`: added a "Common pitfalls" section covering the three onboarding gaps a fresh consumer hits during the first integration. https-canonical override, Next.js openGraph wholesale-replacement, and the `aiInstrumentation.checks.ga4: false` opt-out for no-analytics sites. Each pitfall ships with the minimum code or config snippet that resolves it. Source: end-to-end audit at https://github.com/drjliddy-max/bwt-sample-site (live demo at https://bwt-sample-site.vercel.app), where the same three failures surfaced before docs were extended.
+- `docs(readme)`: extended the Config schema table with `aiInstrumentation.checks` and `aiInstrumentation.skip` rows. The opt-out paths existed in source since `v0.2.0` but were not documented at the consumer surface. The only way to discover them was to read `src/gate-ai-instrumentation.ts`.
 
 ## [0.3.2] - 2026-06-08
 
