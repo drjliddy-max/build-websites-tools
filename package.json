@@ -1,6 +1,6 @@
 {
   "name": "build-websites-tools",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Build-time enforcement gates for production websites: WCAG 2.1 AA accessibility, Google indexing rules, and the MASTER_VISIBILITY_MATRIX AI Instrumentation Contract. One package, every site, no drift.",
   "license": "MIT",

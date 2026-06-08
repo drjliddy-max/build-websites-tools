@@ -42,7 +42,7 @@ The gates run on every Site Clinic-built site as a `prebuild` step. Live consume
 ## Install
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.1.0"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.3.0"
 ```
 
 ## Source

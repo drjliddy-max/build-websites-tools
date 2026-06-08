@@ -30,10 +30,10 @@ The gates run on every Site Clinic-built site as a `prebuild` step. Current cons
 ## Install
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.1.0"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.3.0"
 ```
 
-Pin to a tag (above) for reproducible builds. Replace `#v0.1.0` with the version you want; `npm outdated` will tell you when a newer tag exists.
+Pin to a tag (above) for reproducible builds. Replace `#v0.3.0` with the version you want; `npm outdated` will tell you when a newer tag exists.
 
 ## Wire into a site
 
@@ -44,7 +44,7 @@ Each consuming site needs two files: a `gate.config.json` describing routes and 
 ```json
 {
   "devDependencies": {
-    "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.1.0"
+    "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.3.0"
   },
   "scripts": {
     "gate:ada": "gate-ada",
@@ -130,7 +130,7 @@ No opt-out flag. Operator exception in a site-local CLAUDE.md is the only way to
 
 ## Status
 
-`v0.1.0`. Four gates shipped, tagged for pin-by-version consumption. Active across seven owned sites listed above.
+`v0.3.0`. Four gates shipped, tagged for pin-by-version consumption. Active across seven owned sites listed above.
 
 ## Anti-patterns
 
