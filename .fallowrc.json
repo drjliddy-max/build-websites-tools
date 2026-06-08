@@ -1,0 +1,16 @@
+{
+  "$schema": "https://fallow.tools/schema/v1.json",
+  "entry": [
+    "bin/*.mjs",
+    "src/__tests__/*.test.ts",
+    "src/gate-ada.ts",
+    "src/gate-seo.ts",
+    "src/gate-ai-instrumentation.ts",
+    "src/gate-ai-instrumentation-source.ts"
+  ],
+  "ignorePatterns": [
+    ".fallow/**",
+    "graphify-out/**",
+    "node_modules/**"
+  ]
+}
