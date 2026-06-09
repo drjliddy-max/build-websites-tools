@@ -29,6 +29,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   detectHomepageJsonLdTypes,
+  evaluateGa4PerSiteProperty,
   evaluateHomepageJsonLd,
   evaluateLlms,
   evaluateRobots,
@@ -36,6 +37,7 @@ import {
   findHomepageSource,
   findLlmsSources,
   findRobotsSources,
+  loadGa4ConfigFromGateFile,
 } from "../gate-ai-instrumentation-source";
 
 // ─── Test fixture helpers ────────────────────────────────────────────
@@ -352,21 +354,28 @@ test("evaluateHomepageJsonLd:passes when WebSite present alongside other types",
 
 // ─── End-to-end aggregate ────────────────────────────────────────────
 
-test("evaluateSource:fails fast with all 3 issues surfaced on empty repo", () => {
+test("evaluateSource:fails fast with all 3 fixture issues surfaced on empty repo", () => {
   const cwd = makeTmpDir();
   try {
     const result = evaluateSource({ cwd });
     assert.equal(result.pass, false);
-    assert.equal(result.checks.length, 3);
-    for (const c of result.checks) {
-      assert.equal(c.pass, false);
-    }
+    assert.equal(result.checks.length, 4);
+    // robots, llms, jsonLd all fail; ga4PerSiteProperty passes because no
+    // gate.config.json to evaluate (live-probe gate handles absence).
+    const robots = result.checks.find((c) => c.name === "robots");
+    const llms = result.checks.find((c) => c.name === "llms");
+    const jsonLd = result.checks.find((c) => c.name === "jsonLdSource");
+    const ga4 = result.checks.find((c) => c.name === "ga4PerSiteProperty");
+    assert.equal(robots?.pass, false);
+    assert.equal(llms?.pass, false);
+    assert.equal(jsonLd?.pass, false);
+    assert.equal(ga4?.pass, true);
   } finally {
     cleanup(cwd);
   }
 });
 
-test("evaluateSource:passes when all 3 invariants hold (canonical owned-site shape)", () => {
+test("evaluateSource:passes when all 4 invariants hold (canonical owned-site shape)", () => {
   const cwd = makeTmpDir();
   try {
     writeFile(cwd, "public/robots.txt", ROBOTS_WITH_POLICY);
@@ -376,8 +385,85 @@ test("evaluateSource:passes when all 3 invariants hold (canonical owned-site sha
       "src/app/page.tsx",
       `const jsonLd = \`{"@graph":[{"@type":"Organization"},{"@type":"WebSite"}]}\`;`,
     );
+    writeFile(
+      cwd,
+      "gate.config.json",
+      JSON.stringify({
+        aiInstrumentation: {
+          ga4: { consentGated: { measurementId: "G-DEDICATED1" } },
+        },
+      }),
+    );
     const result = evaluateSource({ cwd });
     assert.equal(result.pass, true);
+    assert.equal(result.checks.length, 4);
+  } finally {
+    cleanup(cwd);
+  }
+});
+
+// ─── GA4 per-site property invariant ─────────────────────────────────
+
+test("evaluateGa4PerSiteProperty:passes when no ga4 config block", () => {
+  const result = evaluateGa4PerSiteProperty(null);
+  assert.equal(result.pass, true);
+});
+
+test("evaluateGa4PerSiteProperty:passes when no measurementId declared", () => {
+  const result = evaluateGa4PerSiteProperty({});
+  assert.equal(result.pass, true);
+});
+
+test("evaluateGa4PerSiteProperty:passes on per-site dedicated measurement ID", () => {
+  const result = evaluateGa4PerSiteProperty({
+    consentGated: { measurementId: "G-29SZ9WTDK1" },
+  });
+  assert.equal(result.pass, true);
+  assert.match(result.detail, /per-site dedicated/);
+});
+
+test("evaluateGa4PerSiteProperty:FAILS on workspace-shared G-CKCC40VRPH without opt-in", () => {
+  const result = evaluateGa4PerSiteProperty({
+    consentGated: { measurementId: "G-CKCC40VRPH" },
+  });
+  assert.equal(result.pass, false);
+  assert.match(result.detail, /workspace-shared/);
+  assert.match(result.detail, /portfolio doctrine/);
+});
+
+test("evaluateGa4PerSiteProperty:passes on workspace-shared WITH explicit opt-in", () => {
+  const result = evaluateGa4PerSiteProperty({
+    consentGated: { measurementId: "G-CKCC40VRPH" },
+    sharedWorkspaceProperty: true,
+  });
+  assert.equal(result.pass, true);
+  assert.match(result.detail, /explicit opt-in/);
+});
+
+test("loadGa4ConfigFromGateFile:reads ga4 block from gate.config.json", () => {
+  const cwd = makeTmpDir();
+  try {
+    writeFile(
+      cwd,
+      "gate.config.json",
+      JSON.stringify({
+        aiInstrumentation: {
+          ga4: { consentGated: { measurementId: "G-TESTID00" } },
+        },
+      }),
+    );
+    const config = loadGa4ConfigFromGateFile(cwd);
+    assert.equal(config?.consentGated?.measurementId, "G-TESTID00");
+  } finally {
+    cleanup(cwd);
+  }
+});
+
+test("loadGa4ConfigFromGateFile:returns null when no gate.config.json", () => {
+  const cwd = makeTmpDir();
+  try {
+    const config = loadGa4ConfigFromGateFile(cwd);
+    assert.equal(config, null);
   } finally {
     cleanup(cwd);
   }

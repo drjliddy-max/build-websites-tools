@@ -395,11 +395,100 @@ export function evaluateHomepageJsonLd({ cwd }: SiteRoot): CheckResult {
 
 // ─── Aggregate ───────────────────────────────────────────────────────
 
+/**
+ * The workspace-shared GA4 measurement ID. Every site that lands this
+ * value in gate.config.json gets the same shared property, defeating
+ * per-customer data isolation. Per portfolio doctrine (2026-06-08):
+ * every site MUST have its own dedicated GA4 property.
+ *
+ * If a site truly needs to use the workspace shared property (rare,
+ * e.g. an operator-owned reference build), declare
+ * `aiInstrumentation.ga4.sharedWorkspaceProperty: true` in
+ * gate.config.json to acknowledge the deviation.
+ */
+const WORKSPACE_SHARED_GA4_ID = "G-CKCC40VRPH";
+
+interface Ga4ConfigShape {
+  consentGated?: { measurementId?: string };
+  sharedWorkspaceProperty?: boolean;
+}
+
+/**
+ * Load aiInstrumentation.ga4 from gate.config.json (separate read so
+ * this check is self-contained and the existing `source` config
+ * subtree stays cleanly scoped for the other checks).
+ */
+export function loadGa4ConfigFromGateFile(cwd: string): Ga4ConfigShape | null {
+  const configPath = path.join(cwd, "gate.config.json");
+  if (!fs.existsSync(configPath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const ai = parsed.aiInstrumentation as Record<string, unknown> | undefined;
+    if (!ai) return null;
+    const ga4 = ai.ga4 as Record<string, unknown> | undefined;
+    if (!ga4 || typeof ga4 !== "object" || Array.isArray(ga4)) return null;
+    return ga4 as Ga4ConfigShape;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Enforce per-site GA4 property uniqueness. FAILS when a site declares
+ * the workspace-shared measurement ID without an explicit opt-in.
+ *
+ * Exported for unit tests.
+ */
+export function evaluateGa4PerSiteProperty(
+  ga4Config: Ga4ConfigShape | null,
+): CheckResult {
+  if (!ga4Config) {
+    return {
+      name: "ga4PerSiteProperty",
+      pass: true,
+      detail:
+        "no aiInstrumentation.ga4 block in gate.config.json (live-probe gate enforces presence at build time)",
+    };
+  }
+  const measurementId = ga4Config.consentGated?.measurementId;
+  if (!measurementId) {
+    return {
+      name: "ga4PerSiteProperty",
+      pass: true,
+      detail:
+        "no aiInstrumentation.ga4.consentGated.measurementId declared",
+    };
+  }
+  if (measurementId !== WORKSPACE_SHARED_GA4_ID) {
+    return {
+      name: "ga4PerSiteProperty",
+      pass: true,
+      detail: `per-site dedicated measurementId ${measurementId}`,
+    };
+  }
+  if (ga4Config.sharedWorkspaceProperty === true) {
+    return {
+      name: "ga4PerSiteProperty",
+      pass: true,
+      detail: `measurementId is workspace-shared ${WORKSPACE_SHARED_GA4_ID} (explicit opt-in via sharedWorkspaceProperty: true)`,
+    };
+  }
+  return {
+    name: "ga4PerSiteProperty",
+    pass: false,
+    detail: `measurementId is workspace-shared ${WORKSPACE_SHARED_GA4_ID}. Every site must have its own dedicated GA4 property per portfolio doctrine. If this is intentional (operator-owned reference build), declare aiInstrumentation.ga4.sharedWorkspaceProperty: true in gate.config.json.`,
+  };
+}
+
 export function evaluateSource({ cwd }: SiteRoot): SourceScanResult {
   const checks: CheckResult[] = [
     evaluateRobots(findRobotsSources({ cwd })),
     evaluateLlms(findLlmsSources({ cwd })),
     evaluateHomepageJsonLd({ cwd }),
+    evaluateGa4PerSiteProperty(loadGa4ConfigFromGateFile(cwd)),
   ];
   return { pass: checks.every((c) => c.pass), checks };
 }
@@ -412,6 +501,7 @@ interface SourceGateConfig {
     robots?: boolean;
     llms?: boolean;
     jsonLdSource?: boolean;
+    ga4PerSiteProperty?: boolean;
   };
 }
 
