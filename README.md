@@ -33,7 +33,7 @@ Together: Google sees what it expects. Screen readers and assistive tech work. L
 - [daily-rise.com](https://daily-rise.com)
 - [jeffrystein.com](https://jeffrystein.com)
 
-Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) (the from-scratch public sample, gates re-verified weekly in [public CI](https://github.com/drjliddy-max/bwt-sample-site/actions/workflows/gates.yml)) and a second client engagement not yet named here. Every build on the Site Clinic stack — 9 sites total — consumes the same four gates from a tagged release pin. No site opts out.
+Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) (the from-scratch public sample, gates re-verified weekly in [public CI](https://github.com/drjliddy-max/bwt-sample-site/actions/workflows/gates.yml)) and a second client engagement not yet named here. Every build on the Site Clinic stack, 9 sites total, consumes the same four gates from a tagged release pin. No site opts out.
 
 ## Install
 
