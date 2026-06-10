@@ -4,6 +4,9 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+- `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all four gates end to end weekly and on push.
+- `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
+
 ## [0.4.1] - 2026-06-09
 
 - `fix(ensure-base-url)`: gate server cleanup now kills the whole launch process group (spawn `detached: true` + `process.kill(-pid)`), not just the wrapper process. When `launchCommand` is an npm wrapper (`npm run dev ...`), the old `child.kill` left the grandchild `next-server` orphaned; it held the inherited stdio pipes open and hung any caller waiting on the gate through `execFile` pipes. Observed 2026-06-09: jeffrystein-web blog-writer publish runs 26807810529 and 27193501696 cancelled at the 10-minute job timeout with an orphaned `next-server (v16.2.7)` in the runner teardown. Regression test `src/__tests__/ensure-base-url.test.ts` launches a real wrapper -> grandchild-server tree and asserts the grandchild dies after cleanup (red on the old code, green on the fix). POSIX-only semantics; gates run on macOS dev machines and ubuntu CI. Also tagged as `v0.3.3` (same fix cherry-picked onto `v0.3.2`) for consumers still pinned to the 0.3.x line.
