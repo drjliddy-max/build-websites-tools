@@ -4,6 +4,13 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-09
+
+- `fix(ensure-base-url)`: gate server cleanup now kills the whole launch process group (spawn `detached: true` + `process.kill(-pid)`), not just the wrapper process. When `launchCommand` is an npm wrapper (`npm run dev ...`), the old `child.kill` left the grandchild `next-server` orphaned; it held the inherited stdio pipes open and hung any caller waiting on the gate through `execFile` pipes. Observed 2026-06-09: jeffrystein-web blog-writer publish runs 26807810529 and 27193501696 cancelled at the 10-minute job timeout with an orphaned `next-server (v16.2.7)` in the runner teardown. Regression test `src/__tests__/ensure-base-url.test.ts` launches a real wrapper -> grandchild-server tree and asserts the grandchild dies after cleanup (red on the old code, green on the fix). POSIX-only semantics; gates run on macOS dev machines and ubuntu CI. Also tagged as `v0.3.3` (same fix cherry-picked onto `v0.3.2`) for consumers still pinned to the 0.3.x line.
+
+## [0.4.0] - 2026-06-08
+
+- `feat(gate-source)`: per-site GA4 property uniqueness invariant in `gate-ai-instrumentation-source`.
 - `feat(gate-ada)`: terminal PASS and FAIL lines now annotate the scan mode when the gate falls back to html-snapshot (`gate:ada  PASS  [html-snapshot mode; color-contrast not evaluated, rerun in browser mode for full WCAG 2.1 AA coverage]`). The early-run warning is unchanged; this duplicates it on the terminal line that most operators scan first in long build logs. Triggered by siteclinic-web commit `7bb07a6` (2026-06-08), which shipped a serious color-contrast violation through a green Vercel build because the early warning was buried in the build log. Browser-mode output is unchanged. Same exit codes.
 - `fix(sonar)`: 4 launcher `main()` calls converted from `.catch()` promise chain to top-level `try { await main() } catch` (S7785). Module target is ES2022, so top-level await is supported natively by both tsx and Node 20. Smoke-tested all 4 bins from `/tmp`; behavior unchanged.
 - `chore(fallow)`: `.fallowrc.json` declares the 12 entry points (4 bin launchers, 4 src gate programs, 4 tests) so `fallow dead-code` reports zero issues instead of the previous 8 false-positive "unused files."

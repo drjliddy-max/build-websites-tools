@@ -63,17 +63,36 @@ export async function ensureBaseUrlReady(config: GateConfig): Promise<() => Prom
     },
     shell: false,
     stdio: "inherit",
+    // Own process group (POSIX) so cleanup can kill the whole launch tree, not
+    // just the wrapper. Gates run on macOS dev machines and ubuntu CI only.
+    detached: true,
   });
 
+  const killProcessGroup = (signal: NodeJS.Signals): boolean => {
+    if (typeof child.pid !== "number") {
+      return false;
+    }
+    try {
+      process.kill(-child.pid, signal);
+      return true;
+    } catch {
+      // ESRCH: every process in the group has already exited.
+      return false;
+    }
+  };
+
   const cleanup = async () => {
-    if (child.exitCode !== null || child.killed) {
+    // Kill the process GROUP, not just the spawned wrapper. launchCommand is
+    // usually an npm wrapper whose grandchild (e.g. next-server) survives a
+    // direct child.kill, keeps the inherited stdio pipes open, and hangs any
+    // caller that waits on this gate via execFile/pipes. Observed 2026-06-09:
+    // blog-writer publish workflows hitting their 10-minute job timeout with
+    // an orphaned next-server after gate-seo finished.
+    if (!killProcessGroup("SIGTERM")) {
       return;
     }
-    child.kill("SIGTERM");
     await delay(500);
-    if (child.exitCode === null && !child.killed) {
-      child.kill("SIGKILL");
-    }
+    killProcessGroup("SIGKILL");
   };
 
   const timeoutMs = config.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
