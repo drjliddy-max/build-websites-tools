@@ -1,5 +1,7 @@
 # build-websites-tools
 
+[![CI](https://github.com/drjliddy-max/build-websites-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/drjliddy-max/build-websites-tools/actions/workflows/ci.yml)
+
 ## The build-time enforcement layer that makes sure your site actually meets the standards you said it would.
 
 [Site Clinic](https://siteclinic.io) is the parent product. This is the open-source enforcement engine Site Clinic uses internally on every site we build. Free for any developer to drop in, no Site Clinic subscription required. We open-sourced it because the gates are how we know a site is shippable, and we'd rather you ship sites that meet the standard than guess at it.
