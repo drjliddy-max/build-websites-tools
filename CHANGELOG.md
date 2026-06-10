@@ -2,6 +2,10 @@
 
 Get notified of major releases by subscribing at [siteclinic.io](https://siteclinic.io).
 
+## [0.3.3] - 2026-06-09
+
+- `fix(ensure-base-url)`: gate server cleanup now kills the whole launch process group (spawn `detached: true` + `process.kill(-pid)`), not just the wrapper process. When `launchCommand` is an npm wrapper (`npm run dev ...`), the old `child.kill` left the grandchild `next-server` orphaned; it held the inherited stdio pipes open and hung any caller waiting on the gate through `execFile` pipes. Observed 2026-06-09: jeffrystein-web blog-writer publish runs 26807810529 and 27193501696 cancelled at the 10-minute job timeout with an orphaned `next-server (v16.2.7)` in the runner teardown. Regression test `src/__tests__/ensure-base-url.test.ts` (red on the old code, green on the fix). Cherry-pick of the same fix released as `v0.4.1` on main; this tag exists for consumers still pinned to the 0.3.x line.
+
 ## [0.3.2] - 2026-06-08
 
 - `chore(hygiene)`: portfolio audit (Sonar + Fallow + Graphify) cleanup. Removed 146 em/en dashes from source, tests, and bin wrappers per the portfolio no-long-dashes rule. Added `src/__tests__/no-long-dashes.test.ts` as a drift-prevention guard on src, bin, and top-level docs.
