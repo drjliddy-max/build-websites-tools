@@ -121,6 +121,21 @@ test("relayInvoked: a helper INSIDE the relay dir that only mentions /api/track 
   assert.equal(evaluateRelayInvoked(hits).pass, false);
 });
 
+test("relayInvoked: a non-relay file mentioning /api/track only in a comment (no call token) does NOT count", () => {
+  // Found 2026-06-17 wiring bmj-marketing: a Button component documenting the
+  // relay in a comment must not satisfy relayInvoked. Only a real HTTP call
+  // (fetch/sendBeacon/XHR/axios/.post) to the relay path counts.
+  const site = makeSite({
+    "src/app/api/track/route.ts": ROUTE_WITH_SECRET,
+    "src/components/Button.tsx":
+      "// This CTA forwards conversion clicks to the /api/track relay.\nexport const Button = () => null;",
+  });
+  const routes = findRelayRoutes({ cwd: site }).map((r) => r.file);
+  const hits = findRelayInvocations({ cwd: site }, routes);
+  assert.deepEqual(hits, [], "comment-only mention must not count as a dual-fire");
+  assert.equal(evaluateRelayInvoked(hits).pass, false);
+});
+
 test("collectSourceFiles skips node_modules / .next / dist", () => {
   const site = makeSite({
     "src/components/A.tsx": "export const a = 1;",

@@ -69,6 +69,15 @@ interface SiteRoot {
 
 const RELAY_PATH = "/api/track";
 
+// A file counts as a real dual-fire only if it references the relay path AND
+// contains an HTTP-call token. Without the call-token requirement, a bare
+// mention of "/api/track" in a COMMENT (e.g. a Button component documenting
+// the relay) would falsely satisfy relayInvoked even though nothing calls the
+// relay. Found 2026-06-17 wiring bmj-marketing. Covers fetch/sendBeacon/XHR/
+// axios and generic `.post(` clients.
+const RELAY_CALL_TOKEN =
+  /\bfetch\s*\(|\bsendBeacon\b|\bXMLHttpRequest\b|\baxios\b|\.post\s*\(/;
+
 // ─── Relay route detection ───────────────────────────────────────────
 
 export interface RelayRouteSource {
@@ -222,7 +231,9 @@ export function findRelayInvocations(
     } catch {
       continue;
     }
-    if (body.includes(RELAY_PATH)) {
+    // Require both the relay path AND an HTTP-call token so a comment-only
+    // mention does not falsely count as a dual-fire (see RELAY_CALL_TOKEN).
+    if (body.includes(RELAY_PATH) && RELAY_CALL_TOKEN.test(body)) {
       hits.push(rel);
     }
   }
