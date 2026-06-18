@@ -6,7 +6,8 @@
     "src/gate-ada.ts",
     "src/gate-seo.ts",
     "src/gate-ai-instrumentation.ts",
-    "src/gate-ai-instrumentation-source.ts"
+    "src/gate-ai-instrumentation-source.ts",
+    "src/gate-conversion-instrumentation-source.ts"
   ],
   "ignorePatterns": [
     ".fallow/**",

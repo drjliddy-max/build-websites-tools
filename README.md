@@ -12,14 +12,15 @@ You finished the site. The Lighthouse score looks fine. The build passes. But a 
 
 **The core issue:** accessibility, indexing, and AI-discoverability rules are easy to author once and impossible to keep current by hand. Sites drift the moment they ship. There's no enforcement between "I added the canonical tag" and "the canonical tag survives every PR."
 
-## The four gates
+## The five gates
 
-`build-websites-tools` ships four enforcement gates that run at `prebuild`. A failing gate fails the build. A failing build does not deploy.
+`build-websites-tools` ships five enforcement gates that run at `prebuild`. A failing gate fails the build. A failing build does not deploy.
 
 1. **`gate-ada`**: WCAG 2.1 AA via axe-core. Every route in `gate.config.json` is loaded in a real browser (or jsdom on cloud hosts without Chromium); the build fails on any critical, serious, or moderate violation.
 2. **`gate-seo`**: Google indexing rules at build time. HTTP 200, no `<meta robots noindex>`, no `X-Robots-Tag: noindex`, canonical matches request path, sitemap and routes are consistent, valid `robots.txt`, full structural meta (title, description, OpenGraph, Twitter card, h1, heading hierarchy, image alt), JSON-LD presence, internal-link canonicality. Blocks the exact failure modes Search Console flags as "Excluded by noindex," "Page with redirect," and "Discovered, currently not indexed."
 3. **`gate-ai-instrumentation`**: runtime check that the AI Instrumentation Contract surfaces are live: per-bot `robots.txt` rules, `llms.txt` served with a valid Markdown heading, AI ingestion endpoint reachable, homepage JSON-LD baseline.
 4. **`gate-ai-instrumentation-source`**: static (no running server needed) source check for the same AI Instrumentation Contract. Fails refactors that silently drop a surface before they ever launch a server. Catches the failure mode where a build passes locally because the dev server is up and breaks in CI because the route handler changed shape.
+5. **`gate-conversion-instrumentation-source`**: static check (no running server needed) that the site ships a consent-independent conversion-event relay so a found visitor's action can actually be measured. Enforces three plumbing invariants: exactly one `/api/track` route, the route forwards server-side via `GA4_API_SECRET` (not consent-gated client gtag), and client code dual-fires to it. Implements the Conversion Instrumentation Contract (MASTER_VISIBILITY_MATRIX §17.3.1.2, 2026-06-17). Add it to a site's `gate:all` once that site has wired its conversion relay; which events a site emits is enforced downstream by Site Monitor, not here.
 
 Together: Google sees what it expects. Screen readers and assistive tech work. LLMs find the per-bot rules and the canonical baseline. Required pages (`/`, `/privacy`, `/terms`, `/accessibility`, `/contact`) cannot ship missing. The same four gates run on every Site Clinic-built site.
 

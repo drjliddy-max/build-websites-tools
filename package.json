@@ -1,6 +1,6 @@
 {
   "name": "build-websites-tools",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "type": "module",
   "description": "Build-time enforcement gates for production websites: WCAG 2.1 AA accessibility, Google indexing rules, and the MASTER_VISIBILITY_MATRIX AI Instrumentation Contract. One package, every site, no drift.",
   "license": "MIT",
@@ -32,7 +32,8 @@
     "gate-ada": "bin/gate-ada.mjs",
     "gate-seo": "bin/gate-seo.mjs",
     "gate-ai-instrumentation": "bin/gate-ai-instrumentation.mjs",
-    "gate-ai-instrumentation-source": "bin/gate-ai-instrumentation-source.mjs"
+    "gate-ai-instrumentation-source": "bin/gate-ai-instrumentation-source.mjs",
+    "gate-conversion-instrumentation-source": "bin/gate-conversion-instrumentation-source.mjs"
   },
   "files": [
     "bin",
