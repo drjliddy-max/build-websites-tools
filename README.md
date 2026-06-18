@@ -22,7 +22,7 @@ You finished the site. The Lighthouse score looks fine. The build passes. But a 
 4. **`gate-ai-instrumentation-source`**: static (no running server needed) source check for the same AI Instrumentation Contract. Fails refactors that silently drop a surface before they ever launch a server. Catches the failure mode where a build passes locally because the dev server is up and breaks in CI because the route handler changed shape.
 5. **`gate-conversion-instrumentation-source`**: static check (no running server needed) that the site ships a consent-independent conversion-event relay so a found visitor's action can actually be measured. Enforces three plumbing invariants: exactly one `/api/track` route, the route forwards server-side via `GA4_API_SECRET` (not consent-gated client gtag), and client code dual-fires to it. Implements the Conversion Instrumentation Contract (MASTER_VISIBILITY_MATRIX §17.3.1.2, 2026-06-17). Add it to a site's `gate:all` once that site has wired its conversion relay; which events a site emits is enforced downstream by Site Monitor, not here.
 
-Together: Google sees what it expects. Screen readers and assistive tech work. LLMs find the per-bot rules and the canonical baseline. Required pages (`/`, `/privacy`, `/terms`, `/accessibility`, `/contact`) cannot ship missing. The same four gates run on every Site Clinic-built site.
+Together: Google sees what it expects. Screen readers and assistive tech work. LLMs find the per-bot rules and the canonical baseline. Required pages (`/`, `/privacy`, `/terms`, `/accessibility`, `/contact`) cannot ship missing. The same five gates run on every Site Clinic-built site.
 
 ## Used by
 
@@ -34,15 +34,15 @@ Together: Google sees what it expects. Screen readers and assistive tech work. L
 - [daily-rise.com](https://daily-rise.com)
 - [jeffrystein.com](https://jeffrystein.com)
 
-Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) (the from-scratch public sample, gates re-verified weekly in [public CI](https://github.com/drjliddy-max/bwt-sample-site/actions/workflows/gates.yml)) and a second client engagement not yet named here. Every build on the Site Clinic stack, 9 sites total, consumes the same four gates from a tagged release pin. No site opts out.
+Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) (the from-scratch public sample, gates re-verified weekly in [public CI](https://github.com/drjliddy-max/bwt-sample-site/actions/workflows/gates.yml)) and a second client engagement not yet named here. Every build on the Site Clinic stack consumes the same five gates from a tagged release pin (`gate-conversion-instrumentation-source` is wired per-site once a site has its conversion relay). No site opts out of the core four.
 
 ## Install
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.3.1"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.5.2"
 ```
 
-Pin to a tag for reproducible builds. Replace `#v0.3.1` with the version you want; `npm outdated` will tell you when a newer tag exists.
+Pin to a tag for reproducible builds. Replace `#v0.5.2` with the version you want; `npm outdated` will tell you when a newer tag exists.
 
 ## Wire it into your site
 
@@ -53,14 +53,15 @@ Two files. That's the whole consumption surface.
 ```json
 {
   "devDependencies": {
-    "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.3.1"
+    "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.5.2"
   },
   "scripts": {
     "gate:ada": "gate-ada",
     "gate:seo": "gate-seo",
-    "gate:ai-instrumentation": "gate-ai-instrumentation",
     "gate:ai-instrumentation-source": "gate-ai-instrumentation-source",
-    "gate:all": "npm run gate:ada && npm run gate:seo && npm run gate:ai-instrumentation-source && npm run gate:ai-instrumentation",
+    "gate:conversion-instrumentation-source": "gate-conversion-instrumentation-source",
+    "gate:ai-instrumentation": "gate-ai-instrumentation",
+    "gate:all": "npm run gate:ada && npm run gate:seo && npm run gate:ai-instrumentation-source && npm run gate:conversion-instrumentation-source && npm run gate:ai-instrumentation",
     "prebuild": "npm run gate:all"
   }
 }
@@ -179,7 +180,7 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 ## Status
 
-`v0.3.1`. Four gates shipped, tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
+`v0.5.2`. Five gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
