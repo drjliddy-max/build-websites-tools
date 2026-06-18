@@ -7,6 +7,10 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all four gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.5.2] - 2026-06-17
+
+- `fix(gate-conversion-instrumentation-source)`: `relayInvoked` now walks the whole consumer tree from cwd instead of a fixed `["src","app",...]` root list, so it finds dual-fires in top-level `lib/` and `components/` dirs of app-router projects that have no `src/` dir. Found 2026-06-17 wiring daily-rise (apps/web), whose dual-fire lives in `lib/client/bookAnalytics.ts` and was invisible to the old scan (false FAIL on relayInvoked). Sites with `src/`-nested code (the other consumers) were never mis-evaluated. Regression test added; 64/64 suite green. Fix-the-class per MASTER_VISIBILITY_MATRIX §17.3.1.2.
+
 ## [0.5.1] - 2026-06-17
 
 - `fix(gate-conversion-instrumentation-source)`: `relayInvoked` now requires an HTTP-call token (`fetch(`/`sendBeacon`/`XMLHttpRequest`/`axios`/`.post(`) alongside the `/api/track` reference, so a bare mention of the relay path in a COMMENT no longer falsely counts as a dual-fire. Found 2026-06-17 wiring bmj-marketing: a `Button` component documenting the relay in a comment satisfied the old string-only check. Without the fix a site with a comment-only mention and no real dual-fire could falsely pass. Regression test added (comment-only mention must not count). 63/63 suite green. Fix-the-class per MASTER_VISIBILITY_MATRIX §17.3.1.2 propagation rule.

@@ -160,7 +160,12 @@ export function evaluateRelaySecret(sources: RelayRouteSource[]): CheckResult {
 
 // ─── Dual-fire (relay invocation) detection ──────────────────────────
 
-const SCAN_ROOTS = ["src", "app", "apps/web/src", "apps/web/app"];
+// Walk the whole consumer tree from cwd (skipping SCAN_SKIP_DIRS + dot-dirs +
+// node_modules) rather than a fixed root list. A fixed ["src","app",...] list
+// missed top-level lib/ and components/ dirs in app-router projects without a
+// src/ dir. Found 2026-06-17 wiring daily-rise, whose dual-fire lives in
+// apps/web/lib/client/bookAnalytics.ts and was invisible to the old scan.
+const SCAN_ROOTS = ["."];
 const SCAN_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs"]);
 const SCAN_SKIP_DIRS = new Set([
   "node_modules",

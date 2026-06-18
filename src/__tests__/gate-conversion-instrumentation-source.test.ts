@@ -136,6 +136,21 @@ test("relayInvoked: a non-relay file mentioning /api/track only in a comment (no
   assert.equal(evaluateRelayInvoked(hits).pass, false);
 });
 
+test("relayInvoked: finds a dual-fire in a top-level lib/ dir (app-router, no src/)", () => {
+  // daily-rise layout (found 2026-06-17): apps/web has app/ + lib/ + components/
+  // at the top, no src/. The dual-fire lives in lib/client/bookAnalytics.ts. The
+  // old fixed SCAN_ROOTS (["src","app",...]) missed it; the cwd walk finds it.
+  const site = makeSite({
+    "app/api/track/route.ts": ROUTE_WITH_SECRET,
+    "lib/client/bookAnalytics.ts":
+      'export function t(){ void fetch("/api/track",{method:"POST"}); }',
+  });
+  const routes = findRelayRoutes({ cwd: site }).map((r) => r.file);
+  const hits = findRelayInvocations({ cwd: site }, routes);
+  assert.deepEqual(hits, ["lib/client/bookAnalytics.ts"]);
+  assert.equal(evaluateRelayInvoked(hits).pass, true);
+});
+
 test("collectSourceFiles skips node_modules / .next / dist", () => {
   const site = makeSite({
     "src/components/A.tsx": "export const a = 1;",
