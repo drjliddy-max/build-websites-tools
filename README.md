@@ -24,6 +24,10 @@ You finished the site. The Lighthouse score looks fine. The build passes. But a 
 
 Together: Google sees what it expects. Screen readers and assistive tech work. LLMs find the per-bot rules and the canonical baseline. Required pages (`/`, `/privacy`, `/terms`, `/accessibility`, `/contact`) cannot ship missing. The same five gates run on every Site Clinic-built site.
 
+## Dashboard-readiness meta-gate
+
+**`gate-dashboard-parity`** (v0.6.0) is a site-side meta-gate that *composes* the five readiness gates above - it runs `gate:ada`, `gate:seo`, `gate:ai-instrumentation-source`, and `gate:conversion-instrumentation-source` and fails the build, naming the gap, if a marketing site is missing any surface a Site Clinic dashboard reads. It does not duplicate their logic; it orchestrates them so a marketing site cannot ship sub-parity. This is the **site side** of board parity (MASTER_VISIBILITY_MATRIX §17.3.1.2); the **board side** is enforced by Site Monitor's `billableClientParity` contract test. Phase 3 Option A (site-side composition); the shared-manifest Option B is deferred. Details: [`docs/GATE_DASHBOARD_PARITY.md`](docs/GATE_DASHBOARD_PARITY.md).
+
 ## Used by
 
 - [siteclinic.io](https://siteclinic.io) (the parent product)
