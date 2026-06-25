@@ -6,6 +6,14 @@
 
 [Site Clinic](https://siteclinic.io) is the parent product. This is the open-source enforcement engine Site Clinic uses internally on every site we build. Free for any developer to drop in, no Site Clinic subscription required. We open-sourced it because the gates are how we know a site is shippable, and we'd rather you ship sites that meet the standard than guess at it.
 
+## The Site Clinic Standard
+
+These five gates define an open, checkable standard for a production-ready site: it meets **WCAG 2.1 AA**, it follows **Google's indexing rules**, and it satisfies the **AI Instrumentation Contract** (machine-discoverable by AI crawlers). The standard *is* the gate set — if your build passes `gate:all`, your site meets it.
+
+The standard is **open and free** under Apache-2.0. Adopt it, run it in your own CI, and display the badge. You do **not** need a Site Clinic subscription to meet the standard or use the gates — the gates are the standard, and they are yours.
+
+Site Clinic (the parent product) is what *maintains the standard for you* and *watches your live site against it over time* — see [what this package does NOT do](#what-this-package-does-not-do-and-where-site-clinic-comes-in). The standard is open; the ongoing service is the paid part.
+
 ## The Problem
 
 You finished the site. The Lighthouse score looks fine. The build passes. But a week after deploy, Google Search Console reports "Excluded by noindex" on a route nobody touched. axe-core finds a `<button>` with no name buried in a vendor component. The `llms.txt` file you added six weeks ago no longer exists because someone refactored the route handler. The site looks live. The site is not actually meeting the standard.
@@ -82,6 +90,39 @@ Start from one of the [templates](./templates/) and adjust:
 Schema, validation rules, and the full list of optional production-architecture gates are documented in this README's [Config schema](#config-schema) section below, and copyable from the templates.
 
 That's it. No gate logic in your repo. No copy-pasted scripts. No drift surface.
+
+## Use the gates in CI (GitHub Actions)
+
+`prebuild` enforces the gates on any host that runs your build. To enforce them as a required status check on every pull request, add a workflow:
+
+```yaml
+# .github/workflows/site-clinic-gates.yml
+name: Site Clinic Gates
+on: [push, pull_request]
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - run: npm run gate:all
+```
+
+Make the `gates` job a required check in your branch-protection rules and no PR can merge a site that fails the standard. The standard is enforced by CI, not by good intentions.
+
+## Display the badge
+
+If your CI runs `gate:all` and passes, show it. Copy this into your README:
+
+```markdown
+[![Built to the Site Clinic Standard](https://img.shields.io/badge/Site_Clinic_Standard-passing-2ea44f)](https://siteclinic.io)
+```
+
+Renders as: [![Built to the Site Clinic Standard](https://img.shields.io/badge/Site_Clinic_Standard-passing-2ea44f)](https://siteclinic.io)
+
+The badge is a **self-assertion** that your build passes the open gates. It is **not** a certification, audit, or endorsement by Site Clinic, and it does **not** mean your live site is monitored. Display it only while your CI actually runs `gate:all`. "Site Clinic" is a trademark of John Liddy; the badge links to [siteclinic.io](https://siteclinic.io) and may be used solely to indicate that your project builds against these open gates.
 
 ## Common pitfalls
 
