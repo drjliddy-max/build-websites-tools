@@ -117,12 +117,12 @@ Make the `gates` job a required check in your branch-protection rules and no PR 
 If your CI runs `gate:all` and passes, show it. Copy this into your README:
 
 ```markdown
-[![Built to the Site Clinic Standard](https://img.shields.io/badge/Site_Clinic_Standard-passing-2ea44f)](https://siteclinic.io)
+[![Built to the Site Clinic Standard](https://img.shields.io/badge/Site_Clinic_Standard-passing-2ea44f)](https://siteclinic.io/standard)
 ```
 
-Renders as: [![Built to the Site Clinic Standard](https://img.shields.io/badge/Site_Clinic_Standard-passing-2ea44f)](https://siteclinic.io)
+Renders as: [![Built to the Site Clinic Standard](https://img.shields.io/badge/Site_Clinic_Standard-passing-2ea44f)](https://siteclinic.io/standard)
 
-The badge is a **self-assertion** that your build passes the open gates. It is **not** a certification, audit, or endorsement by Site Clinic, and it does **not** mean your live site is monitored. Display it only while your CI actually runs `gate:all`. "Site Clinic" is a trademark of John Liddy; the badge links to [siteclinic.io](https://siteclinic.io) and may be used solely to indicate that your project builds against these open gates.
+The badge is a **self-assertion** that your build passes the open gates. It is **not** a certification, audit, or endorsement by Site Clinic, and it does **not** mean your live site is monitored. Display it only while your CI actually runs `gate:all`. "Site Clinic" is a trademark of John Liddy; the badge links to [siteclinic.io/standard](https://siteclinic.io/standard) and may be used solely to indicate that your project builds against these open gates.
 
 ## Common pitfalls
 
