@@ -212,7 +212,7 @@ Paid things from Site Clinic:
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+Proprietary — All Rights Reserved. See [LICENSE](./LICENSE).
 
 ## Support
 
