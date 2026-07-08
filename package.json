@@ -1,7 +1,13 @@
 {
   "name": "build-websites-tools",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
+  "exports": {
+    "./related-content": {
+      "types": "./src/related-content.d.ts",
+      "default": "./src/related-content.js"
+    }
+  },
   "description": "Build-time enforcement gates for production websites: WCAG 2.1 AA accessibility, Google indexing rules, and the MASTER_VISIBILITY_MATRIX AI Instrumentation Contract. One package, every site, no drift.",
   "license": "Apache-2.0",
   "author": "John Liddy",

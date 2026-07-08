@@ -8,11 +8,11 @@
 
 ## The Site Clinic Standard
 
-These five gates define an open, checkable standard for a production-ready site: it meets **WCAG 2.1 AA**, it follows **Google's indexing rules**, and it satisfies the **AI Instrumentation Contract** (machine-discoverable by AI crawlers). The standard *is* the gate set — if your build passes `gate:all`, your site meets it.
+These five gates define an open, checkable standard for a production-ready site: it meets **WCAG 2.1 AA**, it follows **Google's indexing rules**, and it satisfies the **AI Instrumentation Contract** (machine-discoverable by AI crawlers). The standard *is* the gate set: if your build passes `gate:all`, your site meets it.
 
-The standard is **open and free** under Apache-2.0. Adopt it, run it in your own CI, and display the badge. You do **not** need a Site Clinic subscription to meet the standard or use the gates — the gates are the standard, and they are yours.
+The standard is **open and free** under Apache-2.0. Adopt it, run it in your own CI, and display the badge. You do **not** need a Site Clinic subscription to meet the standard or use the gates: the gates are the standard, and they are yours.
 
-Site Clinic (the parent product) is what *maintains the standard for you* and *watches your live site against it over time* — see [what this package does NOT do](#what-this-package-does-not-do-and-where-site-clinic-comes-in). The standard is open; the ongoing service is the paid part.
+Site Clinic (the parent product) is what *maintains the standard for you* and *watches your live site against it over time*. See [what this package does NOT do](#what-this-package-does-not-do-and-where-site-clinic-comes-in). The standard is open; the ongoing service is the paid part.
 
 ## The Problem
 
