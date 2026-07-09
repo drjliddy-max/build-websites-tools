@@ -29,7 +29,7 @@ const POSTS: ScheduleEntryLike[] = [
   { slug: "a4", title: "A four", cluster: "alpha" },
   { slug: "b1", title: "B one", cluster: "beta" },
   { slug: "b2", title: "B two", cluster: "beta" },
-  { slug: "n1", title: "No cluster", title2: undefined } as ScheduleEntryLike,
+  { slug: "n1", title: "No cluster" },
 ];
 
 const CONFIG: RelatedContentConfig = {

@@ -2,11 +2,14 @@
 // internal-linking selection helpers for the build-websites-template fleet.
 // See related-content.js for behaviour and rationale.
 
+// Minimal structural shape the helper needs from a blog-schedule entry.
+// No index signature on purpose: a consumer's own richer entry type (with
+// keywords, dates, etc.) is structurally assignable without having to declare
+// an index signature of its own.
 export interface ScheduleEntryLike {
   slug: string;
   title: string;
   cluster?: string;
-  [key: string]: unknown;
 }
 
 export interface ServiceLink {
