@@ -180,6 +180,20 @@ For consent-gated GA4 (the script injects only after a user consent action), dec
 
 For a working end-to-end sample that exercises all of the above against a fresh Next.js 16 build, see [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) (live at [bwt-sample-site.vercel.app](https://bwt-sample-site.vercel.app)).
 
+## Shared modules (beyond the gates)
+
+Importable helpers that keep multi-site patterns in one place instead of hand-synced copies:
+
+- `build-websites-tools/related-content` - reusable internal-linking selection helper (v0.7.0).
+- `build-websites-tools/first-party-beacon` - the cookieless first-party page-view lane core (v0.8.0): the shared bot/tool user-agent denylist, the client-side send predicate + payload builder, and `createLnHandler({ ownHosts })`, a Web-standard `Request → Response` handler for a site-local `POST /api/ln` proxy that forwards page views server-side to a Site Monitor ingest (`SITE_MONITOR_PAGE_VIEW_URL` + `AI_LOG_SHARED_SECRET`, both read at request time; missing config returns an honest 503). No cookies, no identifiers, no IP forwarded. Consumers keep their framework component, their `ownHosts` list, and their env values:
+
+```ts
+// src/app/api/ln/route.ts
+import { createLnHandler } from "build-websites-tools/first-party-beacon";
+export const dynamic = "force-dynamic";
+export const POST = createLnHandler({ ownHosts: ["example.com", "www.example.com"] });
+```
+
 ## What this package does NOT do (and where Site Clinic comes in)
 
 `build-websites-tools` is build-time enforcement. It runs once per deploy, fails the build if something's wrong, and exits. That's the whole job.

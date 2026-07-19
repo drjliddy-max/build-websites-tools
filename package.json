@@ -1,11 +1,15 @@
 {
   "name": "build-websites-tools",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "type": "module",
   "exports": {
     "./related-content": {
       "types": "./src/related-content.d.ts",
       "default": "./src/related-content.js"
+    },
+    "./first-party-beacon": {
+      "types": "./src/first-party-beacon.d.ts",
+      "default": "./src/first-party-beacon.js"
     }
   },
   "description": "Build-time enforcement gates for production websites: WCAG 2.1 AA accessibility, Google indexing rules, and the MASTER_VISIBILITY_MATRIX AI Instrumentation Contract. One package, every site, no drift.",
