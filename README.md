@@ -20,15 +20,16 @@ You finished the site. The Lighthouse score looks fine. The build passes. But a 
 
 **The core issue:** accessibility, indexing, and AI-discoverability rules are easy to author once and impossible to keep current by hand. Sites drift the moment they ship. There's no enforcement between "I added the canonical tag" and "the canonical tag survives every PR."
 
-## The five gates
+## The six gates
 
-`build-websites-tools` ships five enforcement gates that run at `prebuild`. A failing gate fails the build. A failing build does not deploy.
+`build-websites-tools` ships six enforcement gates that run at `prebuild`. A failing gate fails the build. A failing build does not deploy.
 
 1. **`gate-ada`**: WCAG 2.1 AA via axe-core. Every route in `gate.config.json` is loaded in a real browser (or jsdom on cloud hosts without Chromium); the build fails on any critical, serious, or moderate violation.
-2. **`gate-seo`**: Google indexing rules at build time. HTTP 200, no `<meta robots noindex>`, no `X-Robots-Tag: noindex`, canonical matches request path, sitemap and routes are consistent, valid `robots.txt`, full structural meta (title, description, OpenGraph, Twitter card, h1, heading hierarchy, image alt), JSON-LD presence, internal-link canonicality. Blocks the exact failure modes Search Console flags as "Excluded by noindex," "Page with redirect," and "Discovered, currently not indexed."
+2. **`gate-seo`**: Google indexing rules at build time. HTTP 200, no `<meta robots noindex>`, no `X-Robots-Tag: noindex`, canonical matches request path, sitemap and routes are consistent (parsed as structured XML records, including `lastmod`), truthful sitemap `lastmod` dates, valid `robots.txt`, full structural meta (title, description, OpenGraph, Twitter card, h1, heading hierarchy, image alt), JSON-LD presence, internal-link canonicality. Blocks the exact failure modes Search Console flags as "Excluded by noindex," "Page with redirect," and "Discovered, currently not indexed."
 3. **`gate-ai-instrumentation`**: runtime check that the AI Instrumentation Contract surfaces are live: per-bot `robots.txt` rules, `llms.txt` served with a valid Markdown heading, AI ingestion endpoint reachable, homepage JSON-LD baseline.
 4. **`gate-ai-instrumentation-source`**: static (no running server needed) source check for the same AI Instrumentation Contract. Fails refactors that silently drop a surface before they ever launch a server. Catches the failure mode where a build passes locally because the dev server is up and breaks in CI because the route handler changed shape.
 5. **`gate-conversion-instrumentation-source`**: static check (no running server needed) that the site ships a consent-independent conversion-event relay so a found visitor's action can actually be measured. Enforces three plumbing invariants: exactly one `/api/track` route, the route forwards server-side via `GA4_API_SECRET` (not consent-gated client gtag), and client code dual-fires to it. Implements the Conversion Instrumentation Contract (MASTER_VISIBILITY_MATRIX §17.3.1.2, 2026-06-17). Add it to a site's `gate:all` once that site has wired its conversion relay; which events a site emits is enforced downstream by Site Monitor, not here.
+6. **`gate-sitemap-source`** (v0.9.0): static check that the site's sitemap declares truthful `lastmod` dates. Prohibits `new Date()` with no argument, `Date.now()`, and one build-scoped date variable stamped onto every route. Explicitly allows reading stored content metadata (`new Date(post.published)`) and literal content dates. Companion to the runtime `lastmod` validation now in `gate-seo`: this one catches the construct, that one catches the served result.
 
 Together: Google sees what it expects. Screen readers and assistive tech work. LLMs find the per-bot rules and the canonical baseline. Required pages (`/`, `/privacy`, `/terms`, `/accessibility`, `/contact`) cannot ship missing. The same five gates run on every Site Clinic-built site.
 
@@ -185,6 +186,7 @@ For a working end-to-end sample that exercises all of the above against a fresh 
 Importable helpers that keep multi-site patterns in one place instead of hand-synced copies:
 
 - `build-websites-tools/related-content` - reusable internal-linking selection helper (v0.7.0).
+- `build-websites-tools/sitemap` - deterministic sitemap `lastmod` helpers (v0.9.0). `defineSitemap` builds a stably-ordered, validated entry list from typed route metadata; `newestDate` derives a listing page's date from its newest child; `contentDate` reads stored content metadata; `validateSitemapEntries` is the same validator `gate-seo` runs, so a site can check itself. It never defaults `lastModified` to the current time: a missing date is a loud failure, not a silent clock read. See [`docs/SITEMAP_LASTMOD_STANDARD.md`](docs/SITEMAP_LASTMOD_STANDARD.md).
 - `build-websites-tools/first-party-beacon` - the cookieless first-party page-view lane core (v0.8.0): the shared bot/tool user-agent denylist, the client-side send predicate + payload builder, and `createLnHandler({ ownHosts })`, a Web-standard `Request → Response` handler for a site-local `POST /api/ln` proxy that forwards page views server-side to a Site Monitor ingest (`SITE_MONITOR_PAGE_VIEW_URL` + `AI_LOG_SHARED_SECRET`, both read at request time; missing config returns an honest 503). No cookies, no identifiers, no IP forwarded. Consumers keep their framework component, their `ownHosts` list, and their env values:
 
 ```ts
@@ -220,6 +222,13 @@ That's what [Site Clinic](https://siteclinic.io) does. The gates are free; the o
 | `productionSeo` | no | `object` | Optional production architecture gates (server-rendered HTML, health paths, cache, security headers). |
 | `aiInstrumentation` | no | `object` | Optional AI instrumentation config (per-bot rules, ingestion endpoint path, GA4 consent-gated declaration). |
 | `aiInstrumentation.checks` | no | `object` | Per-dimension opt-outs. Keys: `ga4`, `llmsTxt`, `robotsAiPolicy`, `jsonLd`. Set a key to `false` to skip the named check. Surfaces in the gate output as a declared exception rather than a silent skip. Use for sites that deliberately ship no analytics, or that serve one of the AI Instrumentation Contract surfaces under a different mechanism the gate cannot detect. |
+| `sitemap` | no | `object` | Sitemap `lastmod` standard config (v0.9.0). Keys below. |
+| `sitemap.enforce` | no | `boolean` | Default `true`. Set `false` for staged migration: findings are still printed in full, they just do not fail the build. There is deliberately no way to silence them. |
+| `sitemap.requireLastModified` | no | `boolean` | Default `true`. Every sitemap URL must carry a `<lastmod>`. |
+| `sitemap.maxFutureSkewMinutes` | no | `number` | Default `10`. Tolerance for clock skew before a future `lastmod` fails. |
+| `sitemap.maxIdenticalLastmodCluster` | no | `number` | Default `10`. How many routes may share one identical date before it is reported. A shared *calendar day* is merely reported as tunable; a shared *build instant* is always a failure regardless of this number. |
+| `sitemap.allowMissingLastmodRoutes` | no | `string[]` | Route paths permitted to omit `lastmod`. |
+| `sitemap.dynamicListingRoutes` | no | `string[]` | Listing routes (for example `/blog`) whose date legitimately tracks their newest child, exempt from cluster detection. |
 | `aiInstrumentation.skip` | no | `{ reason: string }` | Whole-gate opt-out with a documented reason. Surfaces in the §19 scorecard as an accepted exception. Use sparingly. The matrix doctrine prefers per-check opt-outs over whole-gate skips. |
 
 ### Required pages
@@ -239,7 +248,7 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 ## Status
 
-`v0.5.2`. Five gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
+`v0.9.0`. Six gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`, `gate-sitemap-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 

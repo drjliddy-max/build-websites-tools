@@ -1,6 +1,6 @@
 {
   "name": "build-websites-tools",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "type": "module",
   "exports": {
     "./related-content": {
@@ -10,6 +10,10 @@
     "./first-party-beacon": {
       "types": "./src/first-party-beacon.d.ts",
       "default": "./src/first-party-beacon.js"
+    },
+    "./sitemap": {
+      "types": "./src/sitemap.d.ts",
+      "default": "./src/sitemap.js"
     }
   },
   "description": "Build-time enforcement gates for production websites: WCAG 2.1 AA accessibility, Google indexing rules, and the MASTER_VISIBILITY_MATRIX AI Instrumentation Contract. One package, every site, no drift.",
@@ -44,7 +48,8 @@
     "gate-ai-instrumentation": "bin/gate-ai-instrumentation.mjs",
     "gate-ai-instrumentation-source": "bin/gate-ai-instrumentation-source.mjs",
     "gate-conversion-instrumentation-source": "bin/gate-conversion-instrumentation-source.mjs",
-    "gate-dashboard-parity": "bin/gate-dashboard-parity.mjs"
+    "gate-dashboard-parity": "bin/gate-dashboard-parity.mjs",
+    "gate-sitemap-source": "bin/gate-sitemap-source.mjs"
   },
   "files": [
     "bin",

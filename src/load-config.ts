@@ -30,6 +30,26 @@ export interface GateConfig {
     destination: string;
     status: number;
   }>;
+  /*
+   * Sitemap lastmod standard (added v0.9.0).
+   *
+   * The locked rule: lastmod = the last substantive content change. Build
+   * time, deploy time, process start time, and framework execution time are
+   * not valid sources on their own.
+   *
+   * Enforcement is ON by default - a standard that defaults to off is not a
+   * standard. `enforce: false` is the staged-migration path: the gate still
+   * runs and still prints every finding, it just does not fail the build.
+   * There is deliberately no way to silence the findings.
+   */
+  sitemap?: {
+    enforce?: boolean;
+    requireLastModified?: boolean;
+    maxFutureSkewMinutes?: number;
+    maxIdenticalLastmodCluster?: number;
+    allowMissingLastmodRoutes?: string[];
+    dynamicListingRoutes?: string[];
+  };
 }
 
 const USAGE_HINT = `gate.config.json must exist at the consuming site's repo root with this shape:
@@ -336,6 +356,62 @@ export function loadGateConfig(): GateConfig {
     }
   }
 
+  if ("sitemap" in obj && obj.sitemap !== undefined) {
+    if (
+      typeof obj.sitemap !== "object" ||
+      obj.sitemap === null ||
+      Array.isArray(obj.sitemap)
+    ) {
+      console.error(
+        `✗ ${configPath}: "sitemap" must be an object when provided, got${JSON.stringify(obj.sitemap)}`,
+      );
+      process.exit(1);
+    }
+
+    const sitemap = obj.sitemap as Record<string, unknown>;
+
+    for (const key of ["enforce", "requireLastModified"]) {
+      const value = sitemap[key];
+      if (value !== undefined && typeof value !== "boolean") {
+        console.error(
+          `✗ ${configPath}: "sitemap.${key}" must be a boolean when provided, got${JSON.stringify(value)}`,
+        );
+        process.exit(1);
+      }
+    }
+
+    for (const key of ["maxFutureSkewMinutes", "maxIdenticalLastmodCluster"]) {
+      const value = sitemap[key];
+      if (value === undefined) continue;
+      if (!Number.isInteger(value) || Number(value) < 0) {
+        console.error(
+          `✗ ${configPath}: "sitemap.${key}" must be a non-negative integer when provided, got${JSON.stringify(value)}`,
+        );
+        process.exit(1);
+      }
+    }
+
+    for (const key of ["allowMissingLastmodRoutes", "dynamicListingRoutes"]) {
+      const value = sitemap[key];
+      if (value === undefined) continue;
+      if (!Array.isArray(value)) {
+        console.error(
+          `✗ ${configPath}: "sitemap.${key}" must be an array when provided, got${JSON.stringify(value)}`,
+        );
+        process.exit(1);
+      }
+      const badPaths = value.filter(
+        (route) => typeof route !== "string" || !(route as string).startsWith("/"),
+      );
+      if (badPaths.length > 0) {
+        console.error(
+          `✗ ${configPath}: every sitemap.${key} entry must be a string starting with "/"; bad entries:${JSON.stringify(badPaths)}`,
+        );
+        process.exit(1);
+      }
+    }
+  }
+
   return {
     routes: obj.routes as string[],
     baseUrl: envOverride || (obj.baseUrl as string),
@@ -355,5 +431,11 @@ export function loadGateConfig(): GateConfig {
     expectedRedirects: Array.isArray(obj.expectedRedirects)
       ? (obj.expectedRedirects as GateConfig["expectedRedirects"])
       : undefined,
+    sitemap:
+      typeof obj.sitemap === "object" &&
+      obj.sitemap !== null &&
+      !Array.isArray(obj.sitemap)
+        ? (obj.sitemap as GateConfig["sitemap"])
+        : undefined,
   };
 }

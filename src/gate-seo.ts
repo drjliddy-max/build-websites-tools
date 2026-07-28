@@ -18,6 +18,8 @@
 import { JSDOM } from "jsdom";
 import { ensureBaseUrlReady } from "./ensure-base-url";
 import { loadGateConfig, type GateConfig } from "./load-config";
+import { parseSitemapXml, type ParsedSitemapEntry } from "./parse-sitemap";
+import { validateSitemapEntries, SITEMAP_DEFAULTS } from "./sitemap.js";
 
 type Check = {
   name: string;
@@ -351,8 +353,14 @@ async function main() {
   try {
     let totalFailures = 0;
 
-    // Sitemap reachable + valid XML + extract URLs for cross-checks
+    // Sitemap reachable + valid XML + STRUCTURED records for cross-checks.
+    //
+    // Structured (loc + lastmod + changefreq + priority) rather than loc-only:
+    // the lastmod standard below cannot be enforced without the full record,
+    // and a real XML parser handles entity-escaped URLs and namespace prefixes
+    // that the previous regex silently mangled.
     let sitemapUrls: string[] = [];
+    let sitemapEntries: ParsedSitemapEntry[] = [];
     process.stdout.write(`gate:seo  /sitemap.xml  …`);
     const sitemapRes = await fetch(`${baseUrl}/sitemap.xml`);
     if (!sitemapRes.ok) {
@@ -360,14 +368,72 @@ async function main() {
       totalFailures += 1;
     } else {
       const body = await sitemapRes.text();
-      const hasXml = body.includes("<urlset");
-      sitemapUrls = Array.from(body.matchAll(/<loc>([^<]+)<\/loc>/g)).map(
-        (match) => match[1],
-      );
-      console.log(
-        hasXml ? ` ✓ ${sitemapUrls.length} URL(s)` : " ✗ invalid XML",
-      );
-      if (!hasXml) totalFailures += 1;
+      const parsed = parseSitemapXml(body);
+      if (!parsed.valid) {
+        console.log(` ✗ ${parsed.error ?? "invalid XML"}`);
+        totalFailures += 1;
+      } else if (parsed.isIndex) {
+        // A sitemap index points at child sitemaps; this gate validates a
+        // single urlset. Say so rather than silently reporting 0 URLs.
+        console.log(
+          ` ✗ <sitemapindex> with ${parsed.sitemapLocations.length} child sitemap(s); gate:seo expects a single <urlset> at /sitemap.xml`,
+        );
+        totalFailures += 1;
+      } else {
+        sitemapEntries = parsed.entries;
+        sitemapUrls = parsed.entries.map((entry) => entry.url);
+        console.log(` ✓ ${sitemapUrls.length} URL(s)`);
+      }
+    }
+
+    /*
+     * Sitemap lastmod standard.
+     *
+     * lastmod must be the last substantive content change. A build/deploy/
+     * process timestamp is not a content date. Google uses lastmod only while
+     * it is consistently accurate and discounts it site-wide once a sitemap
+     * over-reports freshness - which is how siteclinic.io lost the signal for
+     * 35 URLs stuck in "Discovered - currently not indexed".
+     *
+     * Shares one implementation with the exported build-websites-tools/sitemap
+     * helper, so the gate and the sites it polices cannot drift apart.
+     */
+    if (sitemapEntries.length > 0) {
+      const sitemapConfig = config.sitemap ?? {};
+      const enforce = sitemapConfig.enforce !== false;
+      process.stdout.write(`gate:seo  sitemap lastmod standard  …`);
+      const { pass, issues } = validateSitemapEntries(sitemapEntries, {
+        requireLastModified:
+          sitemapConfig.requireLastModified ?? SITEMAP_DEFAULTS.requireLastModified,
+        maxFutureSkewMinutes:
+          sitemapConfig.maxFutureSkewMinutes ?? SITEMAP_DEFAULTS.maxFutureSkewMinutes,
+        maxIdenticalLastmodCluster:
+          sitemapConfig.maxIdenticalLastmodCluster ??
+          SITEMAP_DEFAULTS.maxIdenticalLastmodCluster,
+        allowMissingLastmodRoutes: sitemapConfig.allowMissingLastmodRoutes ?? [],
+        dynamicListingRoutes: sitemapConfig.dynamicListingRoutes ?? [],
+      });
+
+      if (pass) {
+        console.log(` ✓ ${sitemapEntries.length} URL(s) carry truthful content dates`);
+      } else {
+        const totalUrls = issues.reduce((sum, issue) => sum + issue.urls.length, 0);
+        console.log(
+          ` ${enforce ? "✗" : "!"} ${issues.length} issue(s) across ${totalUrls} URL(s)${enforce ? "" : " (enforce:false - reported, not blocking)"}`,
+        );
+        for (const issue of issues) {
+          console.log(`    ${enforce ? "✗" : "!"} [${issue.code}] ${issue.message}`);
+          for (const url of issue.urls) {
+            console.log(`        ${url}`);
+          }
+        }
+        console.log(
+          `    → Standard: lastmod = last substantive content change. Use build-websites-tools/sitemap (defineSitemap) to declare per-route content dates.`,
+        );
+        if (enforce) {
+          totalFailures += issues.length;
+        }
+      }
     }
 
     // robots.txt reachable + valid + doesn't disallow any sitemap URL
