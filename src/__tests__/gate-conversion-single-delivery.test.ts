@@ -220,6 +220,52 @@ test("sessionParams PASSES when the params live in a helper the route imports", 
   assert.equal(checkNamed(root, "sessionParams").pass, true);
 });
 
+// ─── Adopting the shared relay ───────────────────────────────────────
+
+/**
+ * The migration target from the v0.10.0 README. The secret is read inside
+ * build-websites-tools/conversion-relay, so the consumer's route never names
+ * GA4_API_SECRET itself.
+ */
+const ROUTE_ADOPTS_SHARED_RELAY = `
+import { createTrackHandler } from "build-websites-tools/conversion-relay";
+import { ALLOWED_EVENTS } from "./logic";
+
+export const dynamic = "force-dynamic";
+export const POST = createTrackHandler({
+  allowedEvents: [...ALLOWED_EVENTS],
+  fallbackCookieName: "participation_cid",
+});
+`;
+
+test("adopting the shared relay satisfies relaySecret without inlining GA4_API_SECRET", () => {
+  // Regression: found 2026-07-31 running the v0.10.0 gate against the real
+  // participation-effect-site after migrating it. Every fixture up to that
+  // point inlined the secret, so the fixture suite was green while the
+  // documented migration path failed on a real repo. The secret moved INTO the
+  // shared module; a route that delegates to it is not "depending on client
+  // gtag", which is the risk relaySecret exists to catch.
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_ADOPTS_SHARED_RELAY,
+    "src/app/api/track/logic.ts": `export const ALLOWED_EVENTS = ["buy"] as const;`,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+  });
+  assert.equal(checkNamed(root, "relaySecret").pass, true);
+  assert.equal(
+    evaluateSource({ cwd: root }).pass,
+    true,
+    "the documented migration target must pass every invariant",
+  );
+});
+
+test("relaySecret still FAILS a route that neither reads the secret nor adopts the shared relay", () => {
+  const root = makeSite({
+    "src/app/api/track/route.ts": `export async function POST() { return new Response("{}"); }`,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+  });
+  assert.equal(checkNamed(root, "relaySecret").pass, false);
+});
+
 // ─── Aggregate ───────────────────────────────────────────────────────
 
 test("evaluateSource FAILS overall on the exact shape shipped to 7 repos today", () => {

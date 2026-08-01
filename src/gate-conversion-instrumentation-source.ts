@@ -166,7 +166,18 @@ export function evaluateRelayRoute(sources: RelayRouteSource[]): CheckResult {
   };
 }
 
-/** Evaluate the server-secret invariant. Exported for tests. */
+/**
+ * Evaluate the server-secret invariant. Exported for tests.
+ *
+ * Satisfied either by the route reading GA4_API_SECRET itself, or by
+ * delegating to build-websites-tools/conversion-relay, which reads it inside
+ * the shared handler. The risk this invariant exists to catch is a relay that
+ * quietly depends on client gtag; a route that delegates to the shared
+ * server-side handler is not that. Without the delegation clause the v0.10.0
+ * migration target would fail its own documented path - found 2026-07-31
+ * running the gate against the real participation-effect-site, after a fixture
+ * suite that inlined the secret everywhere stayed green.
+ */
 export function evaluateRelaySecret(sources: RelayRouteSource[]): CheckResult {
   if (sources.length !== 1) {
     return {
@@ -176,11 +187,18 @@ export function evaluateRelaySecret(sources: RelayRouteSource[]): CheckResult {
     };
   }
   const src = sources[0];
+  if (src.body.includes(SHARED_RELAY_IMPORT)) {
+    return {
+      name: "relaySecret",
+      pass: true,
+      detail: `${src.file}: delegates to ${SHARED_RELAY_IMPORT}, which forwards server-side with GA4_API_SECRET`,
+    };
+  }
   if (!/GA4_API_SECRET/.test(src.body)) {
     return {
       name: "relaySecret",
       pass: false,
-      detail: `${src.file} does not reference GA4_API_SECRET; a consent-independent relay must forward server-side via the GA4 Measurement Protocol with a server-only secret, not depend on client gtag.`,
+      detail: `${src.file} neither references GA4_API_SECRET nor adopts ${SHARED_RELAY_IMPORT}; a consent-independent relay must forward server-side via the GA4 Measurement Protocol with a server-only secret, not depend on client gtag.`,
     };
   }
   return {

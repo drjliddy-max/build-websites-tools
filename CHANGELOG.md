@@ -7,6 +7,11 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.10.1] - 2026-07-31
+
+- `fix(gate-conversion-instrumentation-source)`: `relaySecret` now also passes when the route delegates to `build-websites-tools/conversion-relay` instead of naming `GA4_API_SECRET` itself. WHY: v0.10.0 moved the secret read INTO the shared handler, so the migration target documented in that same release failed its own gate. Found immediately on migrating participation-effect-site - the first time the gate ran against a real repo rather than a fixture. Every fixture inlined the secret, so the 182-test suite was green while the documented path was broken. The invariant still fails a route that neither reads the secret nor adopts the shared relay, which is the risk it exists to catch (a relay quietly depending on client gtag).
+- `test`: 2 regression tests - the shared-relay migration target passes all four invariants, and a route doing neither still fails.
+
 ## [0.10.0] - 2026-07-31
 
 **BREAKING for every consumer.** `gate-conversion-instrumentation-source` enforced a defect; correcting it fails each site until it migrates. Migration path in README "Migration: v0.9.0 to v0.10.0".
