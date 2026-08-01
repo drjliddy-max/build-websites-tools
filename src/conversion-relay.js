@@ -247,17 +247,32 @@ export function createTrackHandler(options) {
   const generateId =
     opts.generateId ||
     (() => `${Math.floor(Math.random() * 1e10)}.${Math.floor(Date.now() / 1000)}`);
+  // Consumers predate this module and resolve the measurement id from their own
+  // env names (adaauditreport-web uses NEXT_PUBLIC_GA4_ID). Renaming env vars
+  // across nine production projects to suit a shared module is the riskier
+  // direction, so the module accommodates the consumer. Unknown names are still
+  // NOT probed - an undeclared key fails closed with a 503.
+  const measurementIdEnvKeys =
+    opts.measurementIdEnvKeys && opts.measurementIdEnvKeys.length > 0
+      ? opts.measurementIdEnvKeys
+      : ["GA4_MEASUREMENT_ID", "NEXT_PUBLIC_GA_MEASUREMENT_ID"];
 
   return async function handleTrackPost(request) {
     const env = getEnv();
-    const measurementId = env.GA4_MEASUREMENT_ID || env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
+    let measurementId;
+    for (const key of measurementIdEnvKeys) {
+      if (env[key]) {
+        measurementId = env[key];
+        break;
+      }
+    }
     const apiSecret = env.GA4_API_SECRET;
 
     if (!measurementId || !apiSecret) {
       return jsonResponse(
         {
           error:
-            "GA4_MEASUREMENT_ID (or NEXT_PUBLIC_GA_MEASUREMENT_ID) and GA4_API_SECRET must be configured.",
+            `A measurement id (one of: ${measurementIdEnvKeys.join(", ")}) and GA4_API_SECRET must be configured.`,
         },
         503,
       );

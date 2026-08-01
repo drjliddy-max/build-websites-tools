@@ -7,6 +7,11 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.10.3] - 2026-07-31
+
+- `feat(conversion-relay)`: `createTrackHandler` accepts `measurementIdEnvKeys`, the env var names to read the GA4 measurement id from, in order. Default `["GA4_MEASUREMENT_ID", "NEXT_PUBLIC_GA_MEASUREMENT_ID"]` - unchanged behaviour for consumers that do not pass it. WHY: consumers predate this module and resolve the id from their own names; `adaauditreport-web` uses `GA4_MEASUREMENT_ID || NEXT_PUBLIC_GA4_ID`. Hardcoding two names would have 503'd that site's relay on a live revenue path if only the site-specific name were set on the project. Renaming env vars across nine production projects to suit a shared module is the riskier direction, so the module accommodates the consumer. Undeclared names are still never probed: an id present only under an unlisted key fails closed with 503, and the 503 message now names the keys actually checked.
+- `test`: 2 tests - a declared site-specific key resolves and reaches the Measurement Protocol URL, and an undeclared key still 503s.
+
 ## [0.10.2] - 2026-07-31
 
 - `fix(gate-conversion-instrumentation-source)`: `singleDelivery` no longer fires on a `gtag("event", ...)` that appears only in a COMMENT. WHY: the corrected `TrackedLink.tsx` on participation-effect-site explains in a comment that it "used to also call `window.gtag('event', ...)`", and the gate failed on its own remediation note. A gate that punishes the explanation of a fix teaches people to delete the explanation. `gate-sitemap-source` already applied this rule; this gate now reuses its helper rather than reimplementing it.

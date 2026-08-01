@@ -52,6 +52,14 @@ export declare function createTrackHandler(options: {
   allowedEvents: readonly string[];
   /** First-party id cookie for non-consenting visitors. Default "bwt_cid". */
   fallbackCookieName?: string;
+  /**
+   * Env var names to read the GA4 measurement id from, in order.
+   * Default ["GA4_MEASUREMENT_ID", "NEXT_PUBLIC_GA_MEASUREMENT_ID"].
+   * Declare explicitly when a site predates this module and uses another
+   * name (e.g. adaauditreport-web's NEXT_PUBLIC_GA4_ID). Undeclared names
+   * are never probed - the handler fails closed with 503.
+   */
+  measurementIdEnvKeys?: readonly string[];
   cookieMaxAgeSeconds?: number;
   engagementTimeMsec?: number;
   fetchImpl?: typeof fetch;

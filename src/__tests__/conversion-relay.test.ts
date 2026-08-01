@@ -258,3 +258,31 @@ test("handler surfaces a network failure as 502", async () => {
   assert.equal(res.status, 502);
   assert.match((await res.json()).error, /unreachable: boom/);
 });
+
+test("measurementIdEnvKeys lets a consumer declare its own env var names", () => {
+  // adaauditreport-web resolves GA4_MEASUREMENT_ID || NEXT_PUBLIC_GA4_ID. Its
+  // production project may only carry the latter, so hardcoding this module's
+  // two default names would 503 the relay on a live revenue path. Renaming env
+  // vars across nine production projects to suit a shared module is the riskier
+  // direction; the module accommodates the consumer instead.
+  const { calls, impl } = recordingFetch();
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"],
+    measurementIdEnvKeys: ["GA4_MEASUREMENT_ID", "NEXT_PUBLIC_GA4_ID"],
+    getEnv: () => ({ NEXT_PUBLIC_GA4_ID: "G-ADAONLY01", GA4_API_SECRET: "s" }),
+    fetchImpl: impl,
+  });
+  return handler(makeRequest({ name: "buy" })).then((res) => {
+    assert.equal(res.status, 200);
+    assert.match(calls[0].url, /measurement_id=G-ADAONLY01/);
+  });
+});
+
+test("a measurement id present only under an undeclared key still 503s", () => {
+  // Fail closed: an unknown env name must not silently resolve.
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"],
+    getEnv: () => ({ NEXT_PUBLIC_GA4_ID: "G-ADAONLY01", GA4_API_SECRET: "s" }),
+  });
+  return handler(makeRequest({ name: "buy" })).then((res) => assert.equal(res.status, 503));
+});
