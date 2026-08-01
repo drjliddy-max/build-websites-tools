@@ -214,3 +214,25 @@ test("a site with no dynamic sitemap source scans nothing and passes", () => {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("stripCommentsAndStrings({ strings: false }) blanks comments but keeps string bodies", () => {
+  // Added 2026-07-31 for gate-conversion-instrumentation-source, where the
+  // string literal "event" IS the signal being matched.
+  const src = `const a = "keep me"; // drop this\n/* and this */ const b = 'also kept';`;
+  const out = stripCommentsAndStrings(src, { strings: false });
+  assert.ok(out.includes('"keep me"'), "string bodies must survive");
+  assert.ok(out.includes("'also kept'"));
+  assert.ok(!out.includes("drop this"), "line comment must be blanked");
+  assert.ok(!out.includes("and this"), "block comment must be blanked");
+  assert.equal(out.length, src.length, "blanking must preserve offsets");
+});
+
+test("stripCommentsAndStrings does not treat // inside a string as a comment", () => {
+  // Without traversing string literals, the // in an https:// URL would blank
+  // the rest of the line and hide real code from every scan.
+  const src = `const url = "https://example.com"; const d = new Date();`;
+  for (const opts of [{}, { strings: false }]) {
+    const out = stripCommentsAndStrings(src, opts);
+    assert.ok(out.includes("new Date()"), `code after a URL must survive (${JSON.stringify(opts)})`);
+  }
+});

@@ -120,8 +120,19 @@ export function findSitemapSources({ cwd }: SiteRoot): SitemapSourceFile[] {
  * column numbers stay exact for diagnostics. A commented-out `new Date()` or
  * a doc string mentioning it is therefore not a violation - which matters,
  * because this very file's header describes the prohibited patterns.
+ *
+ * `options.strings: false` blanks comments ONLY, leaving string literals
+ * intact. Added 2026-07-31 for gate-conversion-instrumentation-source, whose
+ * pattern is `gtag("event", ...)` - the string literal IS the signal there, so
+ * blanking it would make the check match nothing. String literals are still
+ * traversed either way, because a `//` inside "https://example.com" must never
+ * be mistaken for the start of a comment.
  */
-export function stripCommentsAndStrings(source: string): string {
+export function stripCommentsAndStrings(
+  source: string,
+  options: { strings?: boolean } = {},
+): string {
+  const blankStrings = options.strings !== false;
   const out = source.split("");
   let index = 0;
   const n = source.length;
@@ -161,8 +172,9 @@ export function stripCommentsAndStrings(source: string): string {
         if (source[i] === char) break;
         i += 1;
       }
-      // Keep the quotes, blank the body.
-      blank(index + 1, i);
+      // Keep the quotes, blank the body. Always traverse the literal even when
+      // not blanking it, so its contents cannot be read as code or comments.
+      if (blankStrings) blank(index + 1, i);
       index = Math.min(i + 1, n);
       continue;
     }

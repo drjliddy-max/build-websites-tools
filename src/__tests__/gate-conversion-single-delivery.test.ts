@@ -220,6 +220,44 @@ test("sessionParams PASSES when the params live in a helper the route imports", 
   assert.equal(checkNamed(root, "sessionParams").pass, true);
 });
 
+test("singleDelivery does NOT fire on a gtag call that only appears in a comment", () => {
+  // Found 2026-07-31 migrating participation-effect-site: the corrected
+  // TrackedLink.tsx explains in a comment that it "used to also call
+  // window.gtag('event', ...)", and the gate failed on its own remediation
+  // note. Documenting the prohibited pattern must not itself be a violation -
+  // the same rule gate-sitemap-source already applies via
+  // stripCommentsAndStrings. A gate that punishes the explanation of a fix
+  // teaches people to delete the explanation.
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_WITH_SESSION_PARAMS,
+    "src/components/TrackedLink.tsx": `
+"use client";
+export function trackEvent(name, params) {
+  // This used to also call window.gtag("event", ...) here, which delivered the
+  // same click twice. Conversions are now server-side only.
+  void fetch("/api/track", { method: "POST", body: JSON.stringify({ name }), keepalive: true });
+}
+    `,
+  });
+  assert.equal(checkNamed(root, "singleDelivery").pass, true);
+});
+
+test("singleDelivery still fires on a real gtag call in a file that also has comments about it", () => {
+  // The complement: blanking comments must not blank the actual code.
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_WITH_SESSION_PARAMS,
+    "src/components/TrackedLink.tsx": `
+"use client";
+export function trackEvent(name, params) {
+  // We deliberately dual-fire here for now.
+  window.gtag?.("event", name, params);
+  void fetch("/api/track", { method: "POST", body: JSON.stringify({ name }), keepalive: true });
+}
+    `,
+  });
+  assert.equal(checkNamed(root, "singleDelivery").pass, false);
+});
+
 // ─── Adopting the shared relay ───────────────────────────────────────
 
 /**

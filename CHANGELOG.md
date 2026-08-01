@@ -7,6 +7,12 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.10.2] - 2026-07-31
+
+- `fix(gate-conversion-instrumentation-source)`: `singleDelivery` no longer fires on a `gtag("event", ...)` that appears only in a COMMENT. WHY: the corrected `TrackedLink.tsx` on participation-effect-site explains in a comment that it "used to also call `window.gtag('event', ...)`", and the gate failed on its own remediation note. A gate that punishes the explanation of a fix teaches people to delete the explanation. `gate-sitemap-source` already applied this rule; this gate now reuses its helper rather than reimplementing it.
+- `feat(gate-sitemap-source)`: `stripCommentsAndStrings` takes an optional `{ strings?: boolean }`. Default `true` - existing sitemap behaviour is byte-identical. `strings: false` blanks comments only, for scans where the string literal IS the signal. String literals are still traversed in both modes, so a `//` inside `"https://example.com"` can never be mistaken for a comment and blank the rest of the line.
+- `test`: 4 regression tests - comment-only gtag passes, real gtag alongside comments still fails, `strings: false` preserves string bodies while blanking comments and preserving offsets, and code after a URL survives in both modes.
+
 ## [0.10.1] - 2026-07-31
 
 - `fix(gate-conversion-instrumentation-source)`: `relaySecret` now also passes when the route delegates to `build-websites-tools/conversion-relay` instead of naming `GA4_API_SECRET` itself. WHY: v0.10.0 moved the secret read INTO the shared handler, so the migration target documented in that same release failed its own gate. Found immediately on migrating participation-effect-site - the first time the gate ran against a real repo rather than a fixture. Every fixture inlined the secret, so the 182-test suite was green while the documented path was broken. The invariant still fails a route that neither reads the secret nor adopts the shared relay, which is the risk it exists to catch (a relay quietly depending on client gtag).

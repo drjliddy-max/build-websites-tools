@@ -70,6 +70,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { stripCommentsAndStrings } from "./gate-sitemap-source";
+
 export type CheckResult = {
   name: string;
   pass: boolean;
@@ -331,7 +333,16 @@ export function findGtagDualFireFiles(
     } catch {
       continue;
     }
-    if (GTAG_EVENT_TOKEN.test(body)) hits.push(rel);
+    // Blank COMMENTS before matching, so a file that DOCUMENTS the prohibited
+    // dual-fire (e.g. "this used to also call window.gtag('event', ...)") is
+    // not flagged for explaining its own fix. Found 2026-07-31 when the
+    // corrected participation-effect-site TrackedLink.tsx failed on its own
+    // remediation note. Same rule and same helper as gate-sitemap-source, but
+    // `strings: false`: here the string literal "event" IS the signal, so
+    // blanking string bodies would make this match nothing.
+    if (GTAG_EVENT_TOKEN.test(stripCommentsAndStrings(body, { strings: false }))) {
+      hits.push(rel);
+    }
   }
   return hits;
 }
