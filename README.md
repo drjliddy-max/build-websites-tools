@@ -28,7 +28,7 @@ You finished the site. The Lighthouse score looks fine. The build passes. But a 
 2. **`gate-seo`**: Google indexing rules at build time. HTTP 200, no `<meta robots noindex>`, no `X-Robots-Tag: noindex`, canonical matches request path, sitemap and routes are consistent (parsed as structured XML records, including `lastmod`), truthful sitemap `lastmod` dates, valid `robots.txt`, full structural meta (title, description, OpenGraph, Twitter card, h1, heading hierarchy, image alt), JSON-LD presence, internal-link canonicality. Blocks the exact failure modes Search Console flags as "Excluded by noindex," "Page with redirect," and "Discovered, currently not indexed."
 3. **`gate-ai-instrumentation`**: runtime check that the AI Instrumentation Contract surfaces are live: per-bot `robots.txt` rules, `llms.txt` served with a valid Markdown heading, AI ingestion endpoint reachable, homepage JSON-LD baseline.
 4. **`gate-ai-instrumentation-source`**: static (no running server needed) source check for the same AI Instrumentation Contract. Fails refactors that silently drop a surface before they ever launch a server. Catches the failure mode where a build passes locally because the dev server is up and breaks in CI because the route handler changed shape.
-5. **`gate-conversion-instrumentation-source`**: static check (no running server needed) that the site ships a consent-independent conversion-event relay so a found visitor's action can actually be measured. Enforces three plumbing invariants: exactly one `/api/track` route, the route forwards server-side via `GA4_API_SECRET` (not consent-gated client gtag), and client code dual-fires to it. Implements the Conversion Instrumentation Contract (MASTER_VISIBILITY_MATRIX §17.3.1.2, 2026-06-17). Add it to a site's `gate:all` once that site has wired its conversion relay; which events a site emits is enforced downstream by Site Monitor, not here.
+5. **`gate-conversion-instrumentation-source`**: static check (no running server needed) that the site ships a consent-independent conversion-event relay so a found visitor's action can actually be measured. Enforces four invariants: exactly one `/api/track` route; the route forwards server-side via `GA4_API_SECRET` (not consent-gated client gtag); **single delivery** - client code calls the relay and no caller *also* fires a client `gtag("event", ...)` for the same click; and **session params** - the relay sends `session_id` and `engagement_time_msec`. Implements the Conversion Instrumentation Contract (MASTER_VISIBILITY_MATRIX §17.3.1.2, 2026-06-17), **corrected in v0.10.0** (see Migration below). Add it to a site's `gate:all` once that site has wired its conversion relay; which events a site emits is enforced downstream by Site Monitor, not here.
 6. **`gate-sitemap-source`** (v0.9.0): static check that the site's sitemap declares truthful `lastmod` dates. Prohibits `new Date()` with no argument, `Date.now()`, and one build-scoped date variable stamped onto every route. Explicitly allows reading stored content metadata (`new Date(post.published)`) and literal content dates. Companion to the runtime `lastmod` validation now in `gate-seo`: this one catches the construct, that one catches the served result.
 
 Together: Google sees what it expects. Screen readers and assistive tech work. LLMs find the per-bot rules and the canonical baseline. Required pages (`/`, `/privacy`, `/terms`, `/accessibility`, `/contact`) cannot ship missing. The same five gates run on every Site Clinic-built site.
@@ -248,9 +248,35 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 ## Status
 
-`v0.9.0`. Six gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`, `gate-sitemap-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
+`v0.10.0`. Six gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`, `gate-sitemap-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
+
+## Migration: v0.9.0 to v0.10.0 (breaking)
+
+`gate-conversion-instrumentation-source` was corrected. The v0.9.0 gate required the client to **dual-fire** - to call `gtag("event", ...)` *and* POST to `/api/track`. That enforced an implementation shape rather than an outcome, and the shape was wrong: for a consenting visitor the same click was delivered twice, under two different `client_id`s (the `_ga` cookie vs one the relay minted), so GA4 counted one click as two events and two users. A site that fixed it would have failed its own `prebuild`. A fourth invariant was added because the relay could satisfy every v0.9.0 check while sending events GA4 accepted (`204`) but attached to no session, making conversions unattributable to any landing page, source, or campaign.
+
+Audit trail: `_audit-vault` findings F-20260731-02, -03, -05.
+
+**Every consumer will fail on first bump until it migrates.** Two things to change:
+
+1. **Stop client-side conversion delivery.** In the file that calls `/api/track`, delete the `gtag("event", ...)` call for conversion events. The relay now resolves the visitor's real `_ga` identity when present, so consenting visitors are still attributed correctly - with one event instead of two. `gtag` remains correct for engagement-only telemetry (scroll depth, social clicks) that never reaches the relay.
+
+2. **Adopt the shared relay.** Replace the site's hand-copied `src/app/api/track/{route,logic}.ts` with:
+
+```ts
+// src/app/api/track/route.ts
+import { createTrackHandler } from "build-websites-tools/conversion-relay";
+
+export const dynamic = "force-dynamic";
+export const POST = createTrackHandler({
+  allowedEvents: ["book_buy_click", "chapter_download"], // this site's conversions
+});
+```
+
+`createTrackHandler` supplies `session_id` and `engagement_time_msec`, reuses the `_ga` client and session ids for consenting visitors, mints and persists a first-party id otherwise, declares `consent: DENIED` for ad use when the visitor has not opted in, and withholds the IP in that case. A site that prefers its own implementation may keep it, as long as it carries both session params.
+
+**Re-baseline after deploying.** Conversion counts change on the fix (duplicates stop), so annotate the deploy date in GA4. Do not compare across it.
 
 ## Anti-patterns
 

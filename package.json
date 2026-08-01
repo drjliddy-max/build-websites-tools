@@ -1,11 +1,15 @@
 {
   "name": "build-websites-tools",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "module",
   "exports": {
     "./related-content": {
       "types": "./src/related-content.d.ts",
       "default": "./src/related-content.js"
+    },
+    "./conversion-relay": {
+      "types": "./src/conversion-relay.d.ts",
+      "default": "./src/conversion-relay.js"
     },
     "./first-party-beacon": {
       "types": "./src/first-party-beacon.d.ts",

@@ -1,0 +1,234 @@
+/*
+ * Contract for the v0.10.0 correction of gate:conversion-instrumentation-source.
+ *
+ * WHY THIS FILE EXISTS
+ * ====================
+ * The v0.9.0 gate enforced the dual-fire *shape* ("some client file POSTs to
+ * /api/track" while the client also calls gtag) rather than the *outcome*
+ * ("exactly one attributable conversion delivery per click, in every consent
+ * state"). Encoding shape froze a defect into the standard: for a consenting
+ * visitor the click was delivered twice, under two different client_ids
+ * (_ga vs the relay's own first-party cookie), so GA4 counted one click as two
+ * events and two users. A site that fixed it would have FAILED its own
+ * prebuild, because zero dual-fire callers tripped the relayInvoked invariant.
+ *
+ * Audit trail: _audit-vault findings F-20260731-02 (double count),
+ * F-20260731-03 (sessionless MP events), F-20260731-05 (this gate mandating
+ * the defect). Pattern: Pattern-Instrumented-But-Report-Never-Validated.
+ *
+ * These tests were written BEFORE the fix and verified RED against the v0.9.0
+ * gate - see the commit body for captured output. Per
+ * feedback_a_check_must_be_load_bearing: an assertion that cannot fail on the
+ * defect proves nothing, so each one here is run against the defect first.
+ *
+ * The corrected contract, asserted below:
+ *
+ *   1. RELAY-ROUTE   exactly one /api/track handler                (unchanged)
+ *   2. RELAY-SECRET  the route forwards via GA4_API_SECRET         (unchanged)
+ *   3. SINGLE-DELIVERY  the relay is invoked, AND no caller also fires a
+ *      client gtag event for that click. One click, one delivery.
+ *   4. SESSION-PARAMS   the relay payload carries session_id and
+ *      engagement_time_msec, without which GA4 accepts the event (204) but
+ *      attaches it to no session - so conversions can never be attributed to a
+ *      landing page, source, or campaign.
+ *
+ * Run via: npm test (in build-websites-tools).
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { evaluateSource } from "../gate-conversion-instrumentation-source";
+
+/** Create a temp site root with the given { relativePath: contents } files. */
+function makeSite(files: Record<string, string>): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "conv-single-"));
+  for (const [rel, body] of Object.entries(files)) {
+    const abs = path.join(root, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, body);
+  }
+  return root;
+}
+
+function checkNamed(root: string, name: string) {
+  const result = evaluateSource({ cwd: root });
+  const check = result.checks.find((c) => c.name === name);
+  assert.ok(check, `expected a check named "${name}"; got: ${result.checks.map((c) => c.name).join(", ")}`);
+  return check!;
+}
+
+// ─── Fixtures ────────────────────────────────────────────────────────
+
+/** A relay route that forwards server-side but sends no session params. */
+const ROUTE_NO_SESSION_PARAMS = `
+import { NextResponse } from "next/server";
+export async function POST(request) {
+  const apiSecret = process.env.GA4_API_SECRET;
+  if (!apiSecret) return NextResponse.json({}, { status: 503 });
+  const body = { client_id: "abc", events: [{ name: "buy_click", params: {} }] };
+  await fetch("https://www.google-analytics.com/mp/collect", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return NextResponse.json({ ok: true });
+}
+`;
+
+/** A relay route carrying the session params GA4 needs for attribution. */
+const ROUTE_WITH_SESSION_PARAMS = `
+import { NextResponse } from "next/server";
+export async function POST(request) {
+  const apiSecret = process.env.GA4_API_SECRET;
+  if (!apiSecret) return NextResponse.json({}, { status: 503 });
+  const body = {
+    client_id: "abc",
+    events: [{
+      name: "buy_click",
+      params: { session_id: "1712345678", engagement_time_msec: 100 },
+    }],
+  };
+  await fetch("https://www.google-analytics.com/mp/collect", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return NextResponse.json({ ok: true });
+}
+`;
+
+/**
+ * TODAY'S SHIPPED SHAPE across 7 repos: the click fires client gtag AND posts
+ * to the relay, with no consent check between them. This is the defect.
+ */
+const CLIENT_DUAL_FIRE = `
+"use client";
+export function trackEvent(name, params) {
+  window.gtag?.("event", name, params);
+  void fetch("/api/track", {
+    method: "POST",
+    body: JSON.stringify({ name, params }),
+    keepalive: true,
+  });
+}
+`;
+
+/** The corrected shape: server-only delivery, no client gtag event. */
+const CLIENT_SINGLE_DELIVERY = `
+"use client";
+export function trackEvent(name, params) {
+  void fetch("/api/track", {
+    method: "POST",
+    body: JSON.stringify({ name, params }),
+    keepalive: true,
+  });
+}
+`;
+
+// ─── SINGLE-DELIVERY ─────────────────────────────────────────────────
+
+test("singleDelivery FAILS on the shipped dual-fire shape (the F-20260731-02 defect)", () => {
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_WITH_SESSION_PARAMS,
+    "src/components/TrackedLink.tsx": CLIENT_DUAL_FIRE,
+  });
+  const check = checkNamed(root, "singleDelivery");
+  assert.equal(
+    check.pass,
+    false,
+    "a caller that fires gtag AND posts to /api/track delivers one click twice, under two client_ids",
+  );
+  assert.match(check.detail, /TrackedLink/, "the failure must name the offending file");
+});
+
+test("singleDelivery PASSES when the client delivers only through the relay", () => {
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_WITH_SESSION_PARAMS,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+  });
+  assert.equal(checkNamed(root, "singleDelivery").pass, true);
+});
+
+test("singleDelivery still FAILS when nothing calls the relay at all", () => {
+  // The v0.9.0 relayInvoked protection must survive the rewrite: a relay
+  // nothing calls measures nothing. Correcting the double-count must not
+  // reopen the original 2026-06-17 liddy-podiatry hole.
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_WITH_SESSION_PARAMS,
+    "src/components/Plain.tsx": `export const Plain = () => null;`,
+  });
+  assert.equal(checkNamed(root, "singleDelivery").pass, false);
+});
+
+test("singleDelivery ignores a gtag call in a file that does NOT reach the relay", () => {
+  // Engagement-only telemetry (scroll depth, social clicks) legitimately stays
+  // gtag-only. The invariant is about double-delivering ONE click, not about
+  // banning gtag from the codebase.
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_WITH_SESSION_PARAMS,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+    "src/components/ScrollDepth.tsx": `
+      "use client";
+      export function onScroll() { window.gtag?.("event", "scroll_depth", { pct: 50 }); }
+    `,
+  });
+  assert.equal(checkNamed(root, "singleDelivery").pass, true);
+});
+
+// ─── SESSION-PARAMS ──────────────────────────────────────────────────
+
+test("sessionParams FAILS when the relay omits session_id / engagement_time_msec (F-20260731-03)", () => {
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_NO_SESSION_PARAMS,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+  });
+  const check = checkNamed(root, "sessionParams");
+  assert.equal(
+    check.pass,
+    false,
+    "GA4 returns 204 for a sessionless event, so only a static check can catch this",
+  );
+});
+
+test("sessionParams PASSES when the relay sends both params", () => {
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_WITH_SESSION_PARAMS,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+  });
+  assert.equal(checkNamed(root, "sessionParams").pass, true);
+});
+
+test("sessionParams PASSES when the params live in a helper the route imports", () => {
+  // The shared build-websites-tools/conversion-relay module supplies them, so a
+  // consumer that adopts it must not be forced to inline the tokens.
+  const root = makeSite({
+    "src/app/api/track/route.ts": `
+      import { buildPayload } from "./logic";
+      export async function POST() {
+        const apiSecret = process.env.GA4_API_SECRET;
+        return new Response(JSON.stringify(buildPayload()));
+      }
+    `,
+    "src/app/api/track/logic.ts": `
+      export function buildPayload() {
+        return { params: { session_id: "1", engagement_time_msec: 100 } };
+      }
+    `,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+  });
+  assert.equal(checkNamed(root, "sessionParams").pass, true);
+});
+
+// ─── Aggregate ───────────────────────────────────────────────────────
+
+test("evaluateSource FAILS overall on the exact shape shipped to 7 repos today", () => {
+  // The whole point: this configuration currently PASSES prebuild on every
+  // consumer pinned to v0.9.0, while double-counting every conversion and
+  // attributing none of them to a session.
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_NO_SESSION_PARAMS,
+    "src/components/TrackedLink.tsx": CLIENT_DUAL_FIRE,
+  });
+  assert.equal(evaluateSource({ cwd: root }).pass, false);
+});

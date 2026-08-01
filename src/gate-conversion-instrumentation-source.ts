@@ -22,7 +22,17 @@
  * dual-firing to it. This is the same consent-bypass pattern first shipped on
  * adaauditreport-web 2026-06-07.
  *
- * Three invariants this gate enforces at COMMIT TIME (no server required):
+ * CORRECTED 2026-07-31 (v0.10.0). The original third invariant required the
+ * client to "dual-fire" - to call gtag AND post to the relay. That enforced an
+ * implementation SHAPE instead of an OUTCOME, and the shape was wrong: for a
+ * consenting visitor the same click was delivered twice, under two different
+ * client_ids (the _ga cookie vs the relay's own), so GA4 counted one click as
+ * two events and two users. Worse, a site that fixed it would have FAILED this
+ * gate. A fourth invariant is added because the relay could satisfy every old
+ * check while sending events GA4 accepted (204) but attached to no session.
+ * Audit trail: _audit-vault F-20260731-02, -03, -05.
+ *
+ * Four invariants this gate enforces at COMMIT TIME (no server required):
  *
  *   1. RELAY-ROUTE: exactly one /api/track route handler is present
  *      (src/app/api/track/route.ts or framework equivalent). Zero means no
@@ -34,8 +44,17 @@
  *      only secret rather than depending on client gtag. A route that does
  *      not read the secret is not a consent-independent relay.
  *
- *   3. RELAY-INVOKED: some client/source file other than the route POSTs to
- *      /api/track (the dual-fire). A relay nothing calls measures nothing.
+ *   3. SINGLE-DELIVERY: some client/source file POSTs to /api/track (a relay
+ *      nothing calls measures nothing) AND no such caller also fires a client
+ *      gtag event. One click, one delivery, in every consent state. gtag stays
+ *      legitimate for engagement-only telemetry that never reaches the relay.
+ *
+ *   4. SESSION-PARAMS: the relay sends session_id and engagement_time_msec.
+ *      GA4 answers 204 with or without them, so only a static check catches
+ *      this; without them conversions attach to no session and can never be
+ *      attributed to a landing page, source, or campaign. Satisfied either by
+ *      adopting build-websites-tools/conversion-relay or by carrying both
+ *      params in the site's own relay implementation.
  *
  * Deliberately NOT enforced here: WHICH conversion events a site emits. Event
  * names are site-specific (call_click for a clinic, checkout_started for SaaS)
@@ -77,6 +96,19 @@ const RELAY_PATH = "/api/track";
 // axios and generic `.post(` clients.
 const RELAY_CALL_TOKEN =
   /\bfetch\s*\(|\bsendBeacon\b|\bXMLHttpRequest\b|\baxios\b|\.post\s*\(/;
+
+// A client-side GA4 event send: gtag("event", ...), window.gtag?.("event", ...),
+// gtag('event', ...). Only an "event" command counts - gtag("config"|"consent"|
+// "js", ...) are setup calls and do not deliver a conversion, so banning them
+// would block correct consent handling.
+const GTAG_EVENT_TOKEN = /\bgtag\s*\??\.?\s*\(\s*["']event["']/;
+
+// The two params GA4 needs to attach a Measurement Protocol event to a session.
+const SESSION_PARAM_TOKENS = ["session_id", "engagement_time_msec"] as const;
+
+// Adopting the shared relay satisfies SESSION-PARAMS without inlining the
+// tokens, since the module supplies both.
+const SHARED_RELAY_IMPORT = "build-websites-tools/conversion-relay";
 
 // ─── Relay route detection ───────────────────────────────────────────
 
@@ -261,15 +293,128 @@ export function evaluateRelayInvoked(invocations: string[]): CheckResult {
   };
 }
 
+// ─── Single delivery (no double-count) ───────────────────────────────
+
+/**
+ * Of the files that call the relay, return those that ALSO fire a client gtag
+ * event. Each one delivers a single click twice - once through gtag under the
+ * _ga identity and once through the relay under its own - which is the
+ * F-20260731-02 double-count. Returns site-relative paths. Exported for tests.
+ */
+export function findGtagDualFireFiles(
+  { cwd }: SiteRoot,
+  invocations: string[],
+): string[] {
+  const hits: string[] = [];
+  for (const rel of invocations) {
+    let body: string;
+    try {
+      body = fs.readFileSync(path.join(cwd, rel), "utf8");
+    } catch {
+      continue;
+    }
+    if (GTAG_EVENT_TOKEN.test(body)) hits.push(rel);
+  }
+  return hits;
+}
+
+/**
+ * Evaluate the single-delivery invariant: the relay must be invoked, and no
+ * invoker may also gtag-fire the same click. Exported for tests.
+ */
+export function evaluateSingleDelivery(
+  invocations: string[],
+  dualFireFiles: string[],
+): CheckResult {
+  if (invocations.length === 0) {
+    return {
+      name: "singleDelivery",
+      pass: false,
+      detail: `no client/source file POSTs to ${RELAY_PATH}; the relay exists but nothing calls it, so no conversion is captured. Wire the conversion click handler to fetch("${RELAY_PATH}", ...).`,
+    };
+  }
+  if (dualFireFiles.length > 0) {
+    return {
+      name: "singleDelivery",
+      pass: false,
+      detail: `${dualFireFiles.join(", ")} fires a client gtag("event", ...) AND posts to ${RELAY_PATH}. For a consenting visitor that delivers one click twice, under two different client_ids, inflating both events and users. Deliver conversions server-side only: drop the gtag event call and let ${RELAY_PATH} report it (it resolves the visitor's _ga identity when present). gtag remains correct for engagement-only telemetry that never reaches the relay.`,
+    };
+  }
+  return {
+    name: "singleDelivery",
+    pass: true,
+    detail: `${RELAY_PATH} invoked from ${invocations.slice(0, 3).join(", ")}${invocations.length > 3 ? `, +${invocations.length - 3} more` : ""}; no caller double-fires via gtag`,
+  };
+}
+
+// ─── Session params (attributable events) ────────────────────────────
+
+/**
+ * Collect the relay's implementation sources: the route itself plus any file
+ * in its directory (logic.ts, events.ts, ...), since the payload builder is
+ * conventionally split out of the route. Exported for tests.
+ */
+export function collectRelayImplementation(
+  { cwd }: SiteRoot,
+  routeFiles: string[],
+): string[] {
+  const bodies: string[] = [];
+  for (const rel of routeFiles) {
+    const dir = path.dirname(path.join(cwd, rel));
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !SCAN_EXTENSIONS.has(path.extname(entry.name))) continue;
+      try {
+        bodies.push(fs.readFileSync(path.join(dir, entry.name), "utf8"));
+      } catch {
+        /* unreadable file cannot satisfy the invariant; skip */
+      }
+    }
+  }
+  return bodies;
+}
+
+/** Evaluate the session-params invariant. Exported for tests. */
+export function evaluateSessionParams(bodies: string[]): CheckResult {
+  const joined = bodies.join("\n");
+  if (joined.includes(SHARED_RELAY_IMPORT)) {
+    return {
+      name: "sessionParams",
+      pass: true,
+      detail: `adopts ${SHARED_RELAY_IMPORT}, which supplies session_id and engagement_time_msec`,
+    };
+  }
+  const missing = SESSION_PARAM_TOKENS.filter((t) => !joined.includes(t));
+  if (missing.length > 0) {
+    return {
+      name: "sessionParams",
+      pass: false,
+      detail: `the ${RELAY_PATH} implementation never references ${missing.join(" or ")}. GA4 returns 204 for a Measurement Protocol event that omits these, but attaches it to no session, so the conversion can never be attributed to a landing page, source, or campaign. Send them as EVENT params (not top level), or adopt ${SHARED_RELAY_IMPORT}.`,
+    };
+  }
+  return {
+    name: "sessionParams",
+    pass: true,
+    detail: `relay payload carries ${SESSION_PARAM_TOKENS.join(" + ")}`,
+  };
+}
+
 // ─── Aggregate ───────────────────────────────────────────────────────
 
 export function evaluateSource({ cwd }: SiteRoot): SourceScanResult {
   const routes = findRelayRoutes({ cwd });
   const routeFiles = routes.map((r) => r.file);
+  const invocations = findRelayInvocations({ cwd }, routeFiles);
   const checks: CheckResult[] = [
     evaluateRelayRoute(routes),
     evaluateRelaySecret(routes),
-    evaluateRelayInvoked(findRelayInvocations({ cwd }, routeFiles)),
+    evaluateSingleDelivery(invocations, findGtagDualFireFiles({ cwd }, invocations)),
+    evaluateSessionParams(collectRelayImplementation({ cwd }, routeFiles)),
   ];
   return { pass: checks.every((c) => c.pass), checks };
 }
@@ -281,6 +426,10 @@ interface SourceGateConfig {
   checks?: {
     relayRoute?: boolean;
     relaySecret?: boolean;
+    singleDelivery?: boolean;
+    sessionParams?: boolean;
+    /** @deprecated v0.9.0 name for singleDelivery; still honoured so an
+     *  existing gate.config.json opt-out does not silently start failing. */
     relayInvoked?: boolean;
   };
 }
@@ -321,7 +470,12 @@ async function main(): Promise<void> {
 
   const skipChecks = config.checks ?? {};
   const filtered = checks.filter((c) => {
-    const flag = skipChecks[c.name as keyof typeof skipChecks];
+    let flag = skipChecks[c.name as keyof typeof skipChecks];
+    // Honour the pre-v0.10.0 name so a consumer that had opted out of the old
+    // relayInvoked check does not start failing on the renamed successor.
+    if (flag === undefined && c.name === "singleDelivery") {
+      flag = skipChecks.relayInvoked;
+    }
     return flag !== false;
   });
 
