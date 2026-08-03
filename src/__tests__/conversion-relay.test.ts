@@ -214,7 +214,12 @@ test("handler forwards one attributable event and sets no cookie for a consentin
   assert.equal(calls.length, 1, "exactly one delivery per click");
   assert.equal(calls[0].body.client_id, "111.222", "must reuse the GA identity, not a second one");
   assert.equal(calls[0].body.events[0].params.session_id, "333");
-  assert.equal(calls[0].body.user_ip_address, "203.0.113.9", "first XFF hop only");
+  // Was: asserted user_ip_address === "203.0.113.9". That assertion locked in
+  // the exact behaviour that caused GA4 to accept (204) and silently discard
+  // every conversion event. Corrected 2026-08-01 - the field is now opt-in and
+  // off by default; the XFF-parsing behaviour is still covered by the
+  // forwardIpAddress opt-in test at the end of this file.
+  assert.equal(calls[0].body.user_ip_address, undefined, "no IP by default - see delivery note");
   assert.equal(res.headers.get("set-cookie"), null, "nothing to persist; GA already has the identity");
 });
 
@@ -285,4 +290,56 @@ test("a measurement id present only under an undeclared key still 503s", () => {
     getEnv: () => ({ NEXT_PUBLIC_GA4_ID: "G-ADAONLY01", GA4_API_SECRET: "s" }),
   });
   return handler(makeRequest({ name: "buy" })).then((res) => assert.equal(res.status, 503));
+});
+
+test("by default the request carries NO user_ip_address and NO forwarded User-Agent", () => {
+  // Regression lock for the 2026-08-01 delivery failure. An identical request
+  // without these two extras was accepted AND processed by GA4; with them, GA4
+  // returned the same 204 and silently discarded the event - across two
+  // independently written implementations, for months, on every property.
+  // The failure mode is a silent 204, so only this test stands between the
+  // portfolio and a repeat.
+  const calls: any[] = [];
+  const impl = (async (url: string, init: any) => {
+    calls.push({ url, init });
+    return new Response(null, { status: 204 });
+  }) as unknown as typeof fetch;
+
+  const handler = createTrackHandler({ allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl });
+  return handler(
+    makeRequest({ name: "buy" }, {
+      cookie: "_ga=GA1.1.111.222; _ga_E9VHN7LTXB=GS1.1.333.1.1.0.0.0.0",
+      "x-forwarded-for": "203.0.113.9",
+      "user-agent": "Mozilla/5.0 (probe)",
+    }),
+  ).then(() => {
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.user_ip_address, undefined, "user_ip_address must NOT be sent by default");
+    const headerKeys = Object.keys(calls[0].init.headers).map((k) => k.toLowerCase());
+    assert.ok(!headerKeys.includes("user-agent"), "User-Agent must NOT be forwarded by default");
+  });
+});
+
+test("forwardIpAddress / forwardUserAgent opt back in when explicitly enabled", () => {
+  const calls: any[] = [];
+  const impl = (async (url: string, init: any) => {
+    calls.push({ url, init });
+    return new Response(null, { status: 204 });
+  }) as unknown as typeof fetch;
+
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl,
+    forwardIpAddress: true, forwardUserAgent: true,
+  });
+  return handler(
+    makeRequest({ name: "buy" }, {
+      cookie: "_ga=GA1.1.111.222; _ga_E9VHN7LTXB=GS1.1.333.1.1.0.0.0.0",
+      "x-forwarded-for": "203.0.113.9, 70.41.3.18",
+      "user-agent": "Mozilla/5.0 (probe)",
+    }),
+  ).then(() => {
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.user_ip_address, "203.0.113.9");
+    assert.equal(calls[0].init.headers["User-Agent"], "Mozilla/5.0 (probe)");
+  });
 });

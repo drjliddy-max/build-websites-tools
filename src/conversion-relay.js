@@ -252,6 +252,9 @@ export function createTrackHandler(options) {
   // across nine production projects to suit a shared module is the riskier
   // direction, so the module accommodates the consumer. Unknown names are still
   // NOT probed - an undeclared key fails closed with a 503.
+  // Off by default: see the delivery note in the handler body.
+  const forwardIpAddress = opts.forwardIpAddress === true;
+  const forwardUserAgent = opts.forwardUserAgent === true;
   const measurementIdEnvKeys =
     opts.measurementIdEnvKeys && opts.measurementIdEnvKeys.length > 0
       ? opts.measurementIdEnvKeys
@@ -317,11 +320,28 @@ export function createTrackHandler(options) {
       consented: identity.consented,
     });
 
-    // Forward the IP only for consenting visitors. GA4 uses it for geo
-    // derivation; sending it without consent would widen the data collected
-    // beyond aggregate conversion counting.
+    // Send EXACTLY the payload proven to be accepted and processed by GA4.
+    //
+    // 2026-08-01: an identical hand-rolled request from a laptop landed in the
+    // property within seconds, while the server's request returned the same 204
+    // and was silently discarded - every time, for months, across two
+    // independently written implementations. The only difference between the
+    // two calls was the extra context the server attached: user_ip_address from
+    // x-forwarded-for, and the visitor's User-Agent forwarded as a request
+    // header. Both were present in the pre-2026-07-31 implementation too, which
+    // is why NO conversion event has ever reached ANY property in this
+    // portfolio. Removing them is what made delivery work.
+    //
+    // Both are therefore OFF by default and opt-in per consumer. Do not turn
+    // them on without re-proving delivery on that property first: the failure
+    // mode is a silent 204, so nothing will tell you it broke.
+    //
+    // Cost of leaving IP off: GA4 derives geo from the sender, i.e. the
+    // serverless region, so server-relayed conversions carry the function's
+    // location rather than the visitor's. An attributable conversion with wrong
+    // geo beats a correctly-geolocated conversion that does not exist.
     const body = { ...payload };
-    if (identity.consented) {
+    if (forwardIpAddress && identity.consented) {
       const ip = (request.headers.get("x-forwarded-for") || "").split(",")[0].trim();
       if (ip) body.user_ip_address = ip;
     }
@@ -333,7 +353,9 @@ export function createTrackHandler(options) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(request.headers.get("user-agent")
+          // Forwarding the visitor's User-Agent is opt-in for the same reason
+          // as user_ip_address above - see that comment.
+          ...(forwardUserAgent && request.headers.get("user-agent")
             ? { "User-Agent": request.headers.get("user-agent") }
             : {}),
         },

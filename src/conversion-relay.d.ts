@@ -60,6 +60,15 @@ export declare function createTrackHandler(options: {
    * are never probed - the handler fails closed with 503.
    */
   measurementIdEnvKeys?: readonly string[];
+  /**
+   * Attach user_ip_address (from x-forwarded-for) for consenting visitors.
+   * Default FALSE. Enabling it caused GA4 to silently discard every event
+   * (204 returned, nothing processed) - see the note in conversion-relay.js.
+   * Do not enable without re-proving delivery on that property.
+   */
+  forwardIpAddress?: boolean;
+  /** Forward the visitor's User-Agent header. Default FALSE, same reason. */
+  forwardUserAgent?: boolean;
   cookieMaxAgeSeconds?: number;
   engagementTimeMsec?: number;
   fetchImpl?: typeof fetch;
