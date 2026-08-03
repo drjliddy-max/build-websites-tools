@@ -7,6 +7,11 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.11.0] - 2026-08-01
+
+- `feat(gate-conversion-instrumentation-source)`: fifth invariant **`deliverySafePayload`**. Fails the build when the `/api/track` implementation sends `user_ip_address`, forwards a `"User-Agent"` header to the collect endpoint, or opts back in via `forwardIpAddress`/`forwardUserAgent: true`. WHY: every one of the previous four invariants passed on all nine sites while GA4 discarded 100% of the events (v0.10.4). This is the only invariant in the gate that exists because of a defect **no runtime signal could reveal** - the wire response for a discarded event is byte-identical to the response for a stored one, so source is the only place it is visible. Comments are stripped before matching, so documenting the prohibited fields is not itself a violation. Per-site escape hatch: `conversionInstrumentation.source.checks.deliverySafePayload: false`.
+- `test`: 4 tests, verified RED against the exact relay shape that was live on all nine sites on the morning of 2026-08-01.
+
 ## [0.10.4] - 2026-08-01
 
 **This is the release that makes the relay actually deliver. Every consumer should bump.**

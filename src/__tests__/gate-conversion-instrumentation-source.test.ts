@@ -192,7 +192,7 @@ export async function POST(request) {
 }
 `;
 
-test("evaluateSource: corrected fixture passes all four invariants", () => {
+test("evaluateSource: corrected fixture passes all five invariants", () => {
   const site = makeSite({
     "src/app/api/track/route.ts": ROUTE_WITH_SECRET_AND_SESSION,
     "src/components/ActionTracking.tsx": DUAL_FIRE_COMPONENT,
@@ -202,7 +202,7 @@ test("evaluateSource: corrected fixture passes all four invariants", () => {
   assert.equal(result.pass, true, JSON.stringify(result.checks, null, 2));
   assert.deepEqual(
     result.checks.map((c) => c.name),
-    ["relayRoute", "relaySecret", "singleDelivery", "sessionParams"],
+    ["relayRoute", "relaySecret", "singleDelivery", "sessionParams", "deliverySafePayload"],
   );
 });
 

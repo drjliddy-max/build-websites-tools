@@ -316,3 +316,85 @@ test("evaluateSource FAILS overall on the exact shape shipped to 7 repos today",
   });
   assert.equal(evaluateSource({ cwd: root }).pass, false);
 });
+
+// ─── DELIVERY-SAFE PAYLOAD (v0.11.0) ─────────────────────────────────
+
+/**
+ * The shape that was live on all nine sites until 2026-08-01: a hand-rolled
+ * relay attaching user_ip_address and forwarding the visitor's User-Agent.
+ * GA4 answered 204 and silently discarded every event. See _audit-vault
+ * F-20260801-01.
+ */
+const ROUTE_WITH_DISCARD_FIELDS = `
+import { NextResponse } from "next/server";
+export async function POST(request) {
+  const apiSecret = process.env.GA4_API_SECRET;
+  const ip = (request.headers.get("x-forwarded-for") || "").split(",")[0].trim();
+  const body = {
+    client_id: "abc",
+    user_ip_address: ip,
+    events: [{ name: "buy", params: { session_id: "1", engagement_time_msec: 100 } }],
+  };
+  await fetch("https://www.google-analytics.com/mp/collect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "User-Agent": request.headers.get("user-agent") },
+    body: JSON.stringify(body),
+  });
+  return NextResponse.json({ ok: true });
+}
+`;
+
+const ROUTE_SHARED_RELAY_OPTED_INTO_IP = `
+import { createTrackHandler } from "build-websites-tools/conversion-relay";
+import { ALLOWED_EVENTS } from "./logic";
+export const POST = createTrackHandler({
+  allowedEvents: [...ALLOWED_EVENTS],
+  forwardIpAddress: true,
+});
+`;
+
+test("deliverySafePayload FAILS on a relay that sends user_ip_address (the F-20260801-01 defect)", () => {
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_WITH_DISCARD_FIELDS,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+  });
+  const check = checkNamed(root, "deliverySafePayload");
+  assert.equal(check.pass, false, "GA4 returns 204 and discards - only a static check can catch this");
+  assert.match(check.detail, /user_ip_address/);
+});
+
+test("deliverySafePayload FAILS when the shared relay is opted into IP forwarding", () => {
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_SHARED_RELAY_OPTED_INTO_IP,
+    "src/app/api/track/logic.ts": `export const ALLOWED_EVENTS = ["buy"] as const;`,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+  });
+  assert.equal(checkNamed(root, "deliverySafePayload").pass, false);
+});
+
+test("deliverySafePayload PASSES the corrected shared-relay adoption", () => {
+  const root = makeSite({
+    "src/app/api/track/route.ts": ROUTE_ADOPTS_SHARED_RELAY,
+    "src/app/api/track/logic.ts": `export const ALLOWED_EVENTS = ["buy"] as const;`,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+  });
+  assert.equal(checkNamed(root, "deliverySafePayload").pass, true);
+});
+
+test("deliverySafePayload ignores the fields when they appear only in a comment", () => {
+  const root = makeSite({
+    "src/app/api/track/route.ts": `
+      // We deliberately do NOT send user_ip_address or forward User-Agent:
+      // GA4 silently discards the event. See _audit-vault F-20260801-01.
+      import { NextResponse } from "next/server";
+      export async function POST() {
+        const apiSecret = process.env.GA4_API_SECRET;
+        const body = { client_id: "a", events: [{ name: "buy", params: { session_id: "1", engagement_time_msec: 1 } }] };
+        await fetch("https://www.google-analytics.com/mp/collect", { method: "POST", body: JSON.stringify(body) });
+        return NextResponse.json({ ok: true });
+      }
+    `,
+    "src/components/TrackedLink.tsx": CLIENT_SINGLE_DELIVERY,
+  });
+  assert.equal(checkNamed(root, "deliverySafePayload").pass, true);
+});

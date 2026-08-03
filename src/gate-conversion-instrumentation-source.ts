@@ -32,7 +32,15 @@
  * check while sending events GA4 accepted (204) but attached to no session.
  * Audit trail: _audit-vault F-20260731-02, -03, -05.
  *
- * Four invariants this gate enforces at COMMIT TIME (no server required):
+ * CORRECTED AGAIN 2026-08-01 (v0.11.0). Every invariant above was satisfied on
+ * all nine sites while GA4 discarded 100% of the events, because the relay
+ * attached user_ip_address and forwarded the visitor's User-Agent. The
+ * Measurement Protocol ACCEPTS such an event with a 204 and stores nothing, and
+ * no status code, response body, or validation endpoint reports the loss. A
+ * fifth invariant now rejects the payload shape that causes it. Audit trail:
+ * _audit-vault F-20260801-01.
+ *
+ * Five invariants this gate enforces at COMMIT TIME (no server required):
  *
  *   1. RELAY-ROUTE: exactly one /api/track route handler is present
  *      (src/app/api/track/route.ts or framework equivalent). Zero means no
@@ -55,6 +63,13 @@
  *      attributed to a landing page, source, or campaign. Satisfied either by
  *      adopting build-websites-tools/conversion-relay or by carrying both
  *      params in the site's own relay implementation.
+ *
+  *   5. DELIVERY-SAFE-PAYLOAD: the relay does not send user_ip_address and does
+ *      not forward a "User-Agent" header to the collect endpoint, and does not
+ *      opt back in via forwardIpAddress/forwardUserAgent. This is the only
+ *      invariant here that exists because of a defect no runtime signal could
+ *      reveal: the wire response for a discarded event is byte-identical to the
+ *      response for a stored one, so source is the ONLY place it is visible.
  *
  * Deliberately NOT enforced here: WHICH conversion events a site emits. Event
  * names are site-specific (call_click for a clinic, checkout_started for SaaS)
@@ -111,6 +126,18 @@ const SESSION_PARAM_TOKENS = ["session_id", "engagement_time_msec"] as const;
 // Adopting the shared relay satisfies SESSION-PARAMS without inlining the
 // tokens, since the module supplies both.
 const SHARED_RELAY_IMPORT = "build-websites-tools/conversion-relay";
+
+// Fields that make GA4's Measurement Protocol accept an event (204) and then
+// silently DISCARD it. Proven 2026-08-01: an identical payload without them
+// landed in Realtime within seconds; with them, nothing ever arrived - on any
+// property, for months, across two independently written implementations.
+// _audit-vault F-20260801-01.
+const DISCARD_RISK_PAYLOAD_FIELD = /\buser_ip_address\b/;
+// Forwarding the visitor's UA to the MP endpoint, i.e. a "User-Agent" request
+// header set on the outgoing collect call.
+const DISCARD_RISK_UA_HEADER = /["']User-Agent["']\s*:/i;
+// The shared module keeps both off by default; these opt back in.
+const DISCARD_RISK_OPT_INS = /\bforward(IpAddress|UserAgent)\s*:\s*true\b/;
 
 // ─── Relay route detection ───────────────────────────────────────────
 
@@ -433,6 +460,37 @@ export function evaluateSessionParams(bodies: string[]): CheckResult {
   };
 }
 
+// ─── Delivery-safe payload ───────────────────────────────────────────
+
+/**
+ * Evaluate the delivery-safety invariant. Exported for tests.
+ *
+ * This is the only invariant in this gate that exists because of a defect no
+ * runtime signal could reveal. Everything else here is checkable at the
+ * boundary; this one is checkable ONLY in source, because the wire response for
+ * a discarded event is byte-identical to the wire response for a stored one.
+ */
+export function evaluateDeliverySafePayload(bodies: string[]): CheckResult {
+  const code = bodies.map((b) => stripCommentsAndStrings(b, { strings: false })).join("\n");
+  const problems: string[] = [];
+  if (DISCARD_RISK_PAYLOAD_FIELD.test(code)) problems.push("sends user_ip_address");
+  if (DISCARD_RISK_UA_HEADER.test(code)) problems.push('forwards a "User-Agent" header to the collect endpoint');
+  if (DISCARD_RISK_OPT_INS.test(code)) problems.push("opts back in via forwardIpAddress/forwardUserAgent: true");
+
+  if (problems.length > 0) {
+    return {
+      name: "deliverySafePayload",
+      pass: false,
+      detail: `the ${RELAY_PATH} implementation ${problems.join(" and ")}. GA4's Measurement Protocol ACCEPTS such an event (204) and then silently discards it - nothing is stored, and no status code, response body, or validation endpoint reports the loss. This is why no server-relayed conversion reached any property in this portfolio for months (_audit-vault F-20260801-01). Remove the field/header, or adopt ${SHARED_RELAY_IMPORT}, which omits both by default. Only re-enable after proving delivery on that specific property.`,
+    };
+  }
+  return {
+    name: "deliverySafePayload",
+    pass: true,
+    detail: "payload omits user_ip_address and does not forward a User-Agent header",
+  };
+}
+
 // ─── Aggregate ───────────────────────────────────────────────────────
 
 export function evaluateSource({ cwd }: SiteRoot): SourceScanResult {
@@ -444,6 +502,7 @@ export function evaluateSource({ cwd }: SiteRoot): SourceScanResult {
     evaluateRelaySecret(routes),
     evaluateSingleDelivery(invocations, findGtagDualFireFiles({ cwd }, invocations)),
     evaluateSessionParams(collectRelayImplementation({ cwd }, routeFiles)),
+    evaluateDeliverySafePayload(collectRelayImplementation({ cwd }, routeFiles)),
   ];
   return { pass: checks.every((c) => c.pass), checks };
 }
@@ -457,6 +516,7 @@ interface SourceGateConfig {
     relaySecret?: boolean;
     singleDelivery?: boolean;
     sessionParams?: boolean;
+    deliverySafePayload?: boolean;
     /** @deprecated v0.9.0 name for singleDelivery; still honoured so an
      *  existing gate.config.json opt-out does not silently start failing. */
     relayInvoked?: boolean;
