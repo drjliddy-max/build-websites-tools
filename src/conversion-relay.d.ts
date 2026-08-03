@@ -26,6 +26,7 @@ export declare function resolveIdentity(options: {
   measurementId: string | null | undefined;
   fallbackCookieName: string;
   generateId: () => string;
+  generateSessionId?: () => string;
 }): ResolvedIdentity;
 
 export declare function sanitizeParams(raw: unknown): Record<string, string | number | boolean>;
@@ -73,5 +74,12 @@ export declare function createTrackHandler(options: {
   engagementTimeMsec?: number;
   fetchImpl?: typeof fetch;
   getEnv?: () => Record<string, string | undefined>;
+  /** Mints a client_id in the dotted "<random>.<epoch>" GA form. */
   generateId?: () => string;
+  /**
+   * Mints a session_id. MUST return a BARE INTEGER string - GA4 discards an
+   * event whose session_id carries the dotted client_id shape, returning 204
+   * and storing nothing. Default: epoch seconds.
+   */
+  generateSessionId?: () => string;
 }): (request: Request) => Promise<Response>;

@@ -343,3 +343,29 @@ test("forwardIpAddress / forwardUserAgent opt back in when explicitly enabled", 
     assert.equal(calls[0].init.headers["User-Agent"], "Mozilla/5.0 (probe)");
   });
 });
+
+test("a minted session_id is a bare integer, never the dotted client_id format", () => {
+  // Found 2026-08-03. A consenting visitor's event delivered fine (real
+  // session_id read from _ga_<CONTAINER>, a plain integer). A NON-consenting
+  // visitor's event returned the same 204 and never arrived. The relay minted
+  // BOTH ids from one generator producing "<rand>.<epoch>" - correct for
+  // client_id, invalid for session_id, which GA4 expects as an integer.
+  //
+  // That is the entire population the relay exists to serve, and on
+  // adaauditreport-web (no gtag fallback) it is 100% of conversions.
+  const { calls, impl } = recordingFetch();
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl,
+  });
+  return handler(makeRequest({ name: "buy" })).then(() => {
+    const params = calls[0].body.events[0].params;
+    assert.match(
+      String(params.session_id), /^\d+$/,
+      `session_id must be a bare integer, got "${params.session_id}"`,
+    );
+    assert.match(
+      String(calls[0].body.client_id), /^\d+\.\d+$/,
+      "client_id keeps the dotted GA form",
+    );
+  });
+});

@@ -131,6 +131,7 @@ export function resolveIdentity({
   measurementId,
   fallbackCookieName,
   generateId,
+  generateSessionId,
 }) {
   if (typeof generateId !== "function") {
     throw new Error("resolveIdentity: generateId is required");
@@ -138,11 +139,15 @@ export function resolveIdentity({
   if (!fallbackCookieName) {
     throw new Error("resolveIdentity: fallbackCookieName is required");
   }
+  const mintSession =
+    typeof generateSessionId === "function"
+      ? generateSessionId
+      : () => String(Math.floor(Date.now() / 1000));
   const gaClientId = readGaClientId(cookieHeader);
   if (gaClientId) {
     return {
       clientId: gaClientId,
-      sessionId: readGaSessionId(cookieHeader, measurementId) || generateId(),
+      sessionId: readGaSessionId(cookieHeader, measurementId) || mintSession(),
       consented: true,
       mintedClientId: false,
     };
@@ -151,10 +156,11 @@ export function resolveIdentity({
   const clientId = existing || generateId();
   return {
     clientId,
-    // Without GA cookies there is no session to join. A per-request id keeps
-    // the event attributable to itself rather than silently merging unrelated
-    // visitors into one session.
-    sessionId: generateId(),
+    // Without GA cookies there is no session to join. A per-request integer id
+    // keeps the event attributable to itself rather than silently merging
+    // unrelated visitors into one session. MUST be a bare integer - see the
+    // generator note in createTrackHandler.
+    sessionId: mintSession(),
     consented: false,
     mintedClientId: !existing,
   };
@@ -244,9 +250,20 @@ export function createTrackHandler(options) {
   const cookieMaxAgeSeconds = opts.cookieMaxAgeSeconds ?? 63072000; // 2 years
   const fetchImpl = opts.fetchImpl || ((...args) => fetch(...args));
   const getEnv = opts.getEnv || (() => process.env);
-  const generateId =
+  // GA4 wants two DIFFERENT shapes, and conflating them silently broke the
+  // entire non-consenting population (2026-08-03):
+  //   client_id  "<random>.<epoch-seconds>"  - dotted, mirrors the _ga cookie
+  //   session_id "<epoch-seconds>"           - a BARE INTEGER
+  // One generator was used for both. A consenting visitor was fine, because
+  // their session_id was read from _ga_<CONTAINER> and was already an integer.
+  // A non-consenting visitor got a dotted session_id, and GA4 returned 204 and
+  // discarded the event. That is the whole population this relay exists to
+  // serve, and on a site with no gtag fallback it is 100% of conversions.
+  const generateClientId =
     opts.generateId ||
     (() => `${Math.floor(Math.random() * 1e10)}.${Math.floor(Date.now() / 1000)}`);
+  const generateSessionId =
+    opts.generateSessionId || (() => String(Math.floor(Date.now() / 1000)));
   // Consumers predate this module and resolve the measurement id from their own
   // env names (adaauditreport-web uses NEXT_PUBLIC_GA4_ID). Renaming env vars
   // across nine production projects to suit a shared module is the riskier
@@ -308,7 +325,8 @@ export function createTrackHandler(options) {
       cookieHeader,
       measurementId,
       fallbackCookieName,
-      generateId,
+      generateId: generateClientId,
+      generateSessionId,
     });
 
     const payload = buildMeasurementProtocolPayload({
