@@ -7,6 +7,14 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.11.3] - 2026-08-03
+
+- `fix(conversion-relay)`: **trim env values** before using them. The measurement id and `GA4_API_SECRET` are now read through a trimming accessor. WHY: `jeffrystein.com`'s Vercel Production `NEXT_PUBLIC_GA_MEASUREMENT_ID` held a trailing newline. Untrimmed it became `measurement_id=G-GF3DML4X1Z%0A`; GA4 does not recognise that id, answered `204`, and stored nothing - indistinguishable at the wire from success. Every conversion that site ever relayed was discarded. Proven by runtime instrumentation, then repaired and re-verified end to end (`_audit-vault` F-20260803-01).
+- The trap: the site's CLIENT tag was unaffected, because its `layout.tsx` calls `.trim()` and stray whitespace inside a `gtag('config', ...)` string is harmless. So the property received pageviews while its conversions vanished - which is exactly what makes a malformed env value look innocent. **A working client tag is not evidence that the same value works server-side.**
+- A value that is only whitespace now resolves to missing, so the handler returns its honest `503` rather than sending a blank id.
+- `test`: 2 regression tests, verified RED against the exact production URL (`measurement_id=%20%20G-E9VHN7LTXB%0A`).
+- **No gate accompanies this**, deliberately: a build-time gate cannot observe a production environment value. The defensive read in the module is the only place this class can be caught.
+
 ## [0.11.2] - 2026-08-03
 
 Docs only. No source change; `npm test` 197/197 and typecheck unchanged from v0.11.1.

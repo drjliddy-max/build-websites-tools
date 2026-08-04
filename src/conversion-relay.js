@@ -279,14 +279,28 @@ export function createTrackHandler(options) {
 
   return async function handleTrackPost(request) {
     const env = getEnv();
+    // TRIM. A deploy platform's env editor happily stores a trailing newline,
+    // and every UI renders "G-XXXX\n" identically to "G-XXXX". Untrimmed, that
+    // becomes measurement_id=G-XXXX%0A in the query string; GA4 does not
+    // recognise the id, answers 204, and stores nothing - indistinguishable at
+    // the wire from success. It cost jeffrystein.com every conversion it ever
+    // sent, while its CLIENT tag kept working because the site's own layout
+    // calls .trim() and stray whitespace inside a gtag('config', ...) string is
+    // harmless. Same reasoning applies to the secret: a newline there fails
+    // auth just as silently. _audit-vault F-20260803-01.
+    const readEnv = (key) => {
+      const v = env[key];
+      return typeof v === "string" ? v.trim() : v;
+    };
     let measurementId;
     for (const key of measurementIdEnvKeys) {
-      if (env[key]) {
-        measurementId = env[key];
+      const value = readEnv(key);
+      if (value) {
+        measurementId = value;
         break;
       }
     }
-    const apiSecret = env.GA4_API_SECRET;
+    const apiSecret = readEnv("GA4_API_SECRET");
 
     if (!measurementId || !apiSecret) {
       return jsonResponse(

@@ -203,6 +203,8 @@ export const POST = createTrackHandler({
 });
 ```
 
+  Operational note, learned the hard way: **whitespace in an env value is invisible and fatal.** A trailing newline in the measurement id becomes `measurement_id=G-XXXX%0A`; GA4 returns `204` and stores nothing. The module trims from v0.11.3, but the same class bites anything that puts an env value in a URL. A working client tag proves nothing about the server: `layout.tsx` calls `.trim()`, so a newline is harmless there and fatal here.
+
   Operational note, learned the hard way: a Measurement Protocol API secret is valid only for the **stream it was created on**, and a *deleted* secret is indistinguishable from a valid one at the wire (204, nothing stored). After rotating, verify the deploy platform's env var actually changed - check its `created` timestamp, not your intent - and confirm one real event arrives in the destination property.
 
 - `build-websites-tools/first-party-beacon` - the cookieless first-party page-view lane core (v0.8.0): the shared bot/tool user-agent denylist, the client-side send predicate + payload builder, and `createLnHandler({ ownHosts })`, a Web-standard `Request → Response` handler for a site-local `POST /api/ln` proxy that forwards page views server-side to a Site Monitor ingest (`SITE_MONITOR_PAGE_VIEW_URL` + `AI_LOG_SHARED_SECRET`, both read at request time; missing config returns an honest 503). No cookies, no identifiers, no IP forwarded. Consumers keep their framework component, their `ownHosts` list, and their env values:
@@ -266,7 +268,7 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 ## Status
 
-`v0.11.2`. Six gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`, `gate-sitemap-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
+`v0.11.3`. Six gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`, `gate-sitemap-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 

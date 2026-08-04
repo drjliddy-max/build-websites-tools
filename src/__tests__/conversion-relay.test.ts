@@ -369,3 +369,42 @@ test("a minted session_id is a bare integer, never the dotted client_id format",
     );
   });
 });
+
+test("whitespace in the measurement id or secret env value is trimmed, not encoded into the URL", () => {
+  // Found 2026-08-03 on jeffrystein.com. Vercel Production
+  // NEXT_PUBLIC_GA_MEASUREMENT_ID held "G-GF3DML4X1Z\n". The relay encoded it
+  // as measurement_id=G-GF3DML4X1Z%0A, GA4 did not recognise the id, answered
+  // 204, and stored nothing. The site's CLIENT tag was fine because its
+  // layout.tsx calls .trim() and a newline inside a gtag('config', ...) string
+  // is harmless whitespace - so the property received pageviews while every
+  // conversion vanished. One invisible character, and the status code is
+  // identical whether the event is stored or discarded.
+  // _audit-vault F-20260803-01.
+  const { calls, impl } = recordingFetch();
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"],
+    fetchImpl: impl,
+    getEnv: () => ({
+      GA4_MEASUREMENT_ID: "  G-E9VHN7LTXB\n",
+      GA4_API_SECRET: "test-secret-not-a-real-key\n",
+    }),
+  });
+  return handler(makeRequest({ name: "buy" })).then((res) => {
+    assert.equal(res.status, 200);
+    const url = calls[0].url;
+    assert.ok(
+      url.includes("measurement_id=G-E9VHN7LTXB&"),
+      `measurement id must be trimmed before URL encoding; got: ${url.replace(/api_secret=[^&]*/, "api_secret=<redacted>")}`,
+    );
+    assert.ok(!url.includes("%0A"), "no encoded newline may reach the Measurement Protocol URL");
+    assert.ok(!url.includes("%20"), "no encoded space may reach the Measurement Protocol URL");
+  });
+});
+
+test("a measurement id that is only whitespace is treated as missing (503, not a bad request)", () => {
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"],
+    getEnv: () => ({ GA4_MEASUREMENT_ID: "   \n", GA4_API_SECRET: "s" }),
+  });
+  return handler(makeRequest({ name: "buy" })).then((res) => assert.equal(res.status, 503));
+});
