@@ -272,6 +272,88 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
+## GA4 configuration contract (v0.12.0 - BREAKING for ambiguous config)
+
+### Canonical keys
+
+| Role | Key | Notes |
+|---|---|---|
+| Server (authoritative) | `GA4_MEASUREMENT_ID` | Canonical. Optional - most sites set only the public key. |
+| Public (client tag) | `NEXT_PUBLIC_GA_MEASUREMENT_ID` | Canonical public key. Default for 7 of 9 consumers. |
+| Compatibility alias | `NEXT_PUBLIC_GA4_ID` | **Per-consumer opt-in only**, via `measurementIdEnvKeys`. Used by `siteclinic-web` and `adaauditreport-web`, whose production env predates this module. |
+| Secret | `GA4_API_SECRET` | Server only. Never public, never logged, never in an error body. |
+
+The alias is **deliberately NOT in the default key list.** Adding every observed
+spelling to the default would give every site three keys to disagree about, which is
+strictly more ambiguity - the opposite of this contract's purpose. Aliases stay opt-in
+per consumer and are declared explicitly.
+
+**Deprecation:** the alias is supported indefinitely while those two consumers depend on
+it. Removal requires migrating their production env first and is out of scope for any
+release that does not do that migration.
+
+### Resolution: VALID / MISSING / CONFLICT
+
+`resolveMeasurementId(env, keys)` replaces silent first-non-empty selection.
+
+| Configuration | Result | Route behaviour |
+|---|---|---|
+| No declared key populated | `MISSING` | **503**, names expected keys |
+| Exactly one populated | `VALID` | dispatch to that id |
+| Several populated, values equal after trim | `VALID` (`duplicate: true`) | dispatch once |
+| Several populated, values differ | **`CONFLICT`** | **503**, names the conflicting KEYS, never their values, sends nothing |
+
+Empty and whitespace-only values are absent. Surrounding whitespace is trimmed; the
+identifier is not otherwise rewritten.
+
+**Why refusal rather than precedence.** Until v0.11.3 the first populated key won and the
+loop stopped. A stale `GA4_MEASUREMENT_ID` therefore outranked the correct public id and
+sent every conversion to a different property, reporting `{ok:true}` and a GA4 `204` while
+the intended property stayed empty. No status code could reveal it. Refusing is loud,
+attributable, and fixed by one env edit; choosing silently is none of those.
+
+The `CONFLICT` result carries key names only, so an error string cannot leak an id.
+
+### Event parameter serialization
+
+A malformed **param** is dropped; it never costs the **event** it belongs to.
+
+| Value | Result |
+|---|---|
+| string | kept, truncated to 500 chars |
+| empty string | kept |
+| finite number, including `0` and negatives | kept |
+| boolean, including `false` | kept |
+| `undefined`, `null` | dropped |
+| `NaN`, `Infinity`, `-Infinity` | **dropped** - `JSON.stringify` emits these as `null`, so an unguarded numeric param reaches GA4 as null and the metric is silently lost |
+| array, nested object, function | dropped |
+| key not matching `^[a-zA-Z][a-zA-Z0-9_]{0,39}$` | dropped |
+
+### Navigation guarantee, and its limit
+
+This package ships **no client helper** - `conversion-relay` is server-only and each
+consumer owns its call site. It therefore **cannot guarantee that a pre-redirect event is
+delivered**: `keepalive: true` is a request to the browser, not a receipt.
+
+What the contract does require of a consumer call site, and what the shared suite pins:
+
+- dispatch is initiated **before** navigation;
+- `keepalive: true` is set;
+- the dispatch is not awaited in a way that blocks the customer action;
+- a transport failure is swallowed and exposes no secret and no relay URL.
+
+Verified 2026-08-04: all nine consumers already satisfy this. A source-level gate
+invariant enforcing it is the natural follow-up and is **not** in this release.
+
+### Migration for consumers
+
+Most sites need **no change**: one populated key, or two that agree, both remain `VALID`.
+
+Before upgrading, confirm the deployment does not populate two declared keys with
+different values. Preflight performed 2026-08-04 across all nine consumers found **no
+`CONFLICT` and no `MISSING`**. A site that does conflict will return 503 on `/api/track`
+until exactly one id is set, or both are made identical.
+
 ## Migration: v0.10.x to v0.11.1 (delivery correctness)
 
 If your site already relays conversions, **bump to `v0.11.1` and re-prove delivery**. Between v0.10.0 and v0.11.1 three separate defects were found, each of which caused GA4 to accept an event with a `204` and store nothing:
