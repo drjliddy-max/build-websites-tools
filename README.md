@@ -52,10 +52,10 @@ Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/b
 ## Install
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.5.2"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.11.1"
 ```
 
-Pin to a tag for reproducible builds. Replace `#v0.5.2` with the version you want; `npm outdated` will tell you when a newer tag exists.
+Pin to a tag for reproducible builds. Replace `#v0.11.1` with the version you want; `npm outdated` will tell you when a newer tag exists.
 
 ## Wire it into your site
 
@@ -66,7 +66,7 @@ Two files. That's the whole consumption surface.
 ```json
 {
   "devDependencies": {
-    "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.5.2"
+    "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.11.1"
   },
   "scripts": {
     "gate:ada": "gate-ada",
@@ -187,6 +187,24 @@ Importable helpers that keep multi-site patterns in one place instead of hand-sy
 
 - `build-websites-tools/related-content` - reusable internal-linking selection helper (v0.7.0).
 - `build-websites-tools/sitemap` - deterministic sitemap `lastmod` helpers (v0.9.0). `defineSitemap` builds a stably-ordered, validated entry list from typed route metadata; `newestDate` derives a listing page's date from its newest child; `contentDate` reads stored content metadata; `validateSitemapEntries` is the same validator `gate-seo` runs, so a site can check itself. It never defaults `lastModified` to the current time: a missing date is a loud failure, not a silent clock read. See [`docs/SITEMAP_LASTMOD_STANDARD.md`](docs/SITEMAP_LASTMOD_STANDARD.md).
+- `build-websites-tools/conversion-relay` - the shared server-side GA4 conversion lane (v0.10.0, corrected through v0.11.1). `createTrackHandler({ allowedEvents })` is a Web-standard `Request -> Response` POST handler for a site-local `/api/track` relay: it allowlists the event, resolves the visitor's real `_ga` client id and `_ga_<CONTAINER>` session id when present (both GS1 and GS2 cookie formats) so server-sent events join the session GA4 already has, mints a first-party id otherwise, and returns an honest 503 on missing config rather than a silent 200. Consumers keep only their event allowlist.
+
+  **It deliberately does NOT send `user_ip_address` and does NOT forward the visitor's `User-Agent`.** GA4's Measurement Protocol ACCEPTS an event carrying those with a `204` and then silently discards it - nothing stored, and no status code, response body, or validation endpoint reports the loss. That defect hid in this portfolio for months across two independently written relays; no conversion reached any property. `forwardIpAddress` / `forwardUserAgent` exist to opt back in, default `false`, and `gate-conversion-instrumentation-source` fails the build if a site turns them on. Do not enable either without re-proving delivery on that specific property.
+
+```ts
+// src/app/api/track/route.ts
+import { createTrackHandler } from "build-websites-tools/conversion-relay";
+import { ALLOWED_EVENTS } from "./logic";
+
+export const dynamic = "force-dynamic";
+export const POST = createTrackHandler({
+  allowedEvents: [...ALLOWED_EVENTS],
+  fallbackCookieName: "yoursite_cid",
+});
+```
+
+  Operational note, learned the hard way: a Measurement Protocol API secret is valid only for the **stream it was created on**, and a *deleted* secret is indistinguishable from a valid one at the wire (204, nothing stored). After rotating, verify the deploy platform's env var actually changed - check its `created` timestamp, not your intent - and confirm one real event arrives in the destination property.
+
 - `build-websites-tools/first-party-beacon` - the cookieless first-party page-view lane core (v0.8.0): the shared bot/tool user-agent denylist, the client-side send predicate + payload builder, and `createLnHandler({ ownHosts })`, a Web-standard `Request → Response` handler for a site-local `POST /api/ln` proxy that forwards page views server-side to a Site Monitor ingest (`SITE_MONITOR_PAGE_VIEW_URL` + `AI_LOG_SHARED_SECRET`, both read at request time; missing config returns an honest 503). No cookies, no identifiers, no IP forwarded. Consumers keep their framework component, their `ownHosts` list, and their env values:
 
 ```ts
@@ -251,6 +269,24 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 `v0.11.1`. Six gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`, `gate-sitemap-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
+
+## Migration: v0.10.x to v0.11.1 (delivery correctness)
+
+If your site already relays conversions, **bump to `v0.11.1` and re-prove delivery**. Between v0.10.0 and v0.11.1 three separate defects were found, each of which caused GA4 to accept an event with a `204` and store nothing:
+
+1. **v0.10.4** - the relay sent `user_ip_address` and forwarded the visitor's `User-Agent`. Discarded every event, on every property, for months.
+2. **v0.11.1** - `session_id` was minted with the dotted `client_id` generator. GA4 needs a bare integer, so every **non-consenting** visitor was discarded - the population the relay exists to serve, and 100% of conversions on a site with no client gtag fallback.
+3. **Not a code defect** - a stale or deleted `GA4_API_SECRET` in the deploy environment. A deleted secret behaves exactly like a valid one at the wire.
+
+**None of these is observable at runtime.** `gate-conversion-instrumentation-source` v0.11.0 adds `deliverySafePayload` to catch (1) statically, and unit tests lock (2). Nothing can catch (3) except looking at the destination.
+
+**Verification that actually proves something**, in this order:
+
+1. Send the payload **directly to GA4**, bypassing your app, with the site's measurement id and secret. If it does not arrive, the problem is GA4/property/secret and no code change will help. This one step partitions the whole problem and should be first.
+2. Then send the same event through your live `/api/track`.
+3. Then look for it in that property's Realtime - and **wait a few minutes**. Measurement Protocol events do not surface instantly; reading too early produces confident false negatives.
+
+A `200` from `/api/track` proves the handler is live and its config resolved. It does **not** prove delivery.
 
 ## Migration: v0.9.0 to v0.10.0 (breaking)
 
