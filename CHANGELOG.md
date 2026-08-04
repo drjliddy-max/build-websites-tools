@@ -7,6 +7,15 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.11.2] - 2026-08-03
+
+Docs only. No source change; `npm test` 197/197 and typecheck unchanged from v0.11.1.
+
+- `docs`: install examples corrected from `#v0.5.2` to the current tag. They were six minor versions stale, so a new consumer following the README would have wired a version carrying every delivery defect fixed since - the `user_ip_address`/`User-Agent` silent discard and the dotted `session_id`.
+- `docs`: `conversion-relay` documented under Shared modules with its adoption snippet, why `forwardIpAddress`/`forwardUserAgent` are off by default, and the fact that a Measurement Protocol secret is valid only for the stream it was created on while a deleted secret is indistinguishable from a valid one at the wire.
+- `docs`: v0.10.x to v0.11.1 migration section giving the verification order that actually proves delivery - direct-to-GA4 first, since it partitions GA4/secret from your own code in one step.
+- Released as its own tag because the docs correction landed after the `v0.11.1` tag, leaving `main` and that tag both claiming 0.11.1 while differing. Consumers on `v0.11.1` need no bump: the shipped code is byte-identical.
+
 ## [0.11.1] - 2026-08-03
 
 - `fix(conversion-relay)`: mint `session_id` as a **bare integer**, separate from `client_id`. WHY: GA4 wants two different shapes - `client_id` is dotted `"<random>.<epoch>"` mirroring the `_ga` cookie, `session_id` is a plain integer. One generator was used for both. A CONSENTING visitor was unaffected, because their `session_id` is read from `_ga_<CONTAINER>` and is already an integer - which is exactly why the 2026-08-01 end-to-end proof passed. A NON-consenting visitor got a dotted `session_id`, and GA4 returned 204 and discarded the event. Proven 2026-08-03: the same production relay that delivers for a consented click delivered nothing for a cookieless request. That is the entire population the relay exists to serve, and on `adaauditreport-web` - which has no client gtag fallback - it is 100% of conversions.

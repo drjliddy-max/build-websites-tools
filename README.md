@@ -266,7 +266,7 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 ## Status
 
-`v0.11.1`. Six gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`, `gate-sitemap-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
+`v0.11.2`. Six gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`, `gate-sitemap-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
