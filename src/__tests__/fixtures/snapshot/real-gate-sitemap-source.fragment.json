@@ -1,0 +1,22 @@
+{
+  "gate": "gate-sitemap-source",
+  "version": "0.11.3",
+  "startedAt": "2026-08-05T02:24:32.587Z",
+  "finishedAt": "2026-08-05T02:24:32.589Z",
+  "outcome": "pass",
+  "provenance": {
+    "enforce": true,
+    "sitemapSourceFiles": [
+      "src/app/sitemap.ts"
+    ],
+    "violationCount": 0,
+    "violations": []
+  },
+  "checks": [
+    {
+      "name": "sitemap-source",
+      "pass": true,
+      "detail": "1 source(s) declare content dates"
+    }
+  ]
+}

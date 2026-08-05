@@ -5,3 +5,6 @@ node_modules/
 # Local audit tool output (Fallow, Graphify). Regenerated on every scan.
 .fallow/
 graphify-out/
+
+# gate-snapshot output (build artifact, never committed)
+.gate-snapshots/

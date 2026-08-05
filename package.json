@@ -1,6 +1,6 @@
 {
   "name": "build-websites-tools",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "type": "module",
   "exports": {
     "./related-content": {
@@ -53,7 +53,8 @@
     "gate-ai-instrumentation-source": "bin/gate-ai-instrumentation-source.mjs",
     "gate-conversion-instrumentation-source": "bin/gate-conversion-instrumentation-source.mjs",
     "gate-dashboard-parity": "bin/gate-dashboard-parity.mjs",
-    "gate-sitemap-source": "bin/gate-sitemap-source.mjs"
+    "gate-sitemap-source": "bin/gate-sitemap-source.mjs",
+    "gate-snapshot": "bin/gate-snapshot.mjs"
   },
   "files": [
     "bin",
@@ -62,7 +63,8 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/__tests__/*.test.ts"
+    "test": "node --import tsx --test src/__tests__/*.test.ts",
+    "gate:snapshot": "node bin/gate-snapshot.mjs"
   },
   "dependencies": {
     "@axe-core/playwright": "^4.10.0",

@@ -20,6 +20,7 @@ import { ensureBaseUrlReady } from "./ensure-base-url";
 import { loadGateConfig, type GateConfig } from "./load-config";
 import { parseSitemapXml, type ParsedSitemapEntry } from "./parse-sitemap";
 import { validateSitemapEntries, SITEMAP_DEFAULTS } from "./sitemap.js";
+import { beginFragment } from "./snapshot";
 
 type Check = {
   name: string;
@@ -348,6 +349,9 @@ async function checkRoute(route: string, baseUrl: string, config: GateConfig): P
 async function main() {
   const config = loadGateConfig();
   const { routes, baseUrl } = config;
+  // Named `fragment`, not `snapshot`: this file already uses `snapshot` for a
+  // per-route RouteSnapshot. Shadowing it would be a silent footgun later.
+  const fragment = beginFragment("gate-seo");
   const stopServer = await ensureBaseUrlReady(config);
 
   try {
@@ -640,6 +644,11 @@ async function main() {
       }
 
       const allChecks = [...httpChecks, ...structuralChecks];
+      // Prefix with the route so a merged fragment stays attributable: the
+      // gate emits the same check NAMES for every route.
+      fragment.checks(
+        allChecks.map((c) => ({ ...c, name: `${route} :: ${c.name}` })),
+      );
       const failed = allChecks.filter((check) => !check.pass);
       if (failed.length === 0) {
         console.log(` ✓ ${allChecks.length} checks passed`);
@@ -743,6 +752,13 @@ async function main() {
         console.log(` ✓ ${dependencyChecks.length} path(s)`);
       }
     }
+
+    fragment.provenance({
+      baseUrl,
+      routeCount: routes.length,
+      sitemapUrlCount: sitemapUrls.length,
+      totalFailures,
+    });
 
     if (totalFailures > 0) {
       console.error(`\ngate:seo  FAIL: ${totalFailures} failure(s)`);

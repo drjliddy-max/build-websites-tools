@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/drjliddy-max/build-websites-tools/schema/build-snapshot-v1.schema.json",
+  "title": "Site Clinic build snapshot",
+  "description": "One record of what the build-time gates measured, for one build of one site. Produced by gate-snapshot. This is an evidence artifact, not a verdict: a snapshot records what was measured, including failures, and is never itself a pass.",
+  "type": "object",
+  "required": ["schemaVersion", "snapshotId", "site", "build", "completeness", "gates", "summary"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "snapshotId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Content address over (domain, commitSha, buildId, environment, gateConfigHash, per-gate outcomes and check results). Deliberately excludes capturedAt so two merges of the same build are identical and an ingestion endpoint can treat a re-POST as a no-op."
+    },
+
+    "site": {
+      "type": "object",
+      "required": ["domain", "repo", "routeCount", "gateConfigHash"],
+      "additionalProperties": false,
+      "properties": {
+        "domain": { "type": ["string", "null"], "description": "Hostname from gate.config.json baseUrl. Null when unresolvable." },
+        "repo": { "type": "string" },
+        "routeCount": { "type": "integer", "minimum": 0 },
+        "gateConfigHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Hash of measurement SCOPE (routes, expected gates, scope-affecting config). Changes when what is measured changes; stable across runs otherwise. A change means totals moved for scope reasons, not necessarily quality."
+        }
+      }
+    },
+
+    "build": {
+      "type": "object",
+      "required": ["capturedAt", "commitSha", "branch", "buildId", "environment", "baseUrl", "toolsVersion", "ci"],
+      "additionalProperties": false,
+      "properties": {
+        "capturedAt": { "type": "string", "format": "date-time" },
+        "commitSha": { "type": ["string", "null"], "description": "Never invented. Null when it cannot be established." },
+        "branch": { "type": ["string", "null"] },
+        "buildId": { "type": ["string", "null"] },
+        "environment": {
+          "enum": ["production", "preview", "development", "local", "unknown"],
+          "description": "A local or preview snapshot must never be represented as production evidence."
+        },
+        "baseUrl": { "type": ["string", "null"] },
+        "toolsVersion": { "type": "string" },
+        "ci": { "type": "boolean" }
+      }
+    },
+
+    "completeness": {
+      "type": "object",
+      "required": ["status", "gatesExpected", "gatesRun", "gatesNotRun", "malformed", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": ["complete", "partial"],
+          "description": "partial when any expected gate did not run or any fragment was malformed. A partial snapshot establishes a floor, never a clean bill of health."
+        },
+        "gatesExpected": { "type": "array", "items": { "type": "string" } },
+        "gatesRun": { "type": "array", "items": { "type": "string" } },
+        "gatesNotRun": { "type": "array", "items": { "type": "string" } },
+        "malformed": { "type": "array", "items": { "type": "string" } },
+        "reason": { "type": ["string", "null"] }
+      }
+    },
+
+    "gates": {
+      "type": "object",
+      "description": "Keyed by gate name. A gate that did not run is present with outcome not_run - never omitted, never rendered as an empty passing record.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["outcome"],
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "enum": ["pass", "fail", "error", "not_run"],
+            "description": "pass/fail derive from the gate's real exit code. error means the gate could not complete a measurement (e.g. a route would not load), which is distinct from measuring a failure. not_run means no fragment existed."
+          },
+          "startedAt": { "type": "string", "format": "date-time" },
+          "finishedAt": { "type": "string", "format": "date-time" },
+          "provenance": { "type": "object" },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "pass", "detail"],
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string" },
+                "pass": { "type": "boolean" },
+                "detail": { "type": "string" }
+              }
+            }
+          },
+          "malformed": { "const": true },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+
+    "summary": {
+      "type": "object",
+      "required": ["checksTotal", "checksPassed", "checksFailed", "comparability"],
+      "additionalProperties": false,
+      "properties": {
+        "checksTotal": { "type": "integer", "minimum": 0 },
+        "checksPassed": { "type": "integer", "minimum": 0 },
+        "checksFailed": { "type": "integer", "minimum": 0 },
+        "axeViolationsBlocking": { "type": ["integer", "null"] },
+        "axeViolationsMinor": { "type": ["integer", "null"] },
+        "comparability": {
+          "type": "object",
+          "required": ["adaScanMode", "note"],
+          "additionalProperties": false,
+          "properties": {
+            "adaScanMode": {
+              "type": ["string", "null"],
+              "enum": ["browser", "html-snapshot", null],
+              "description": "html-snapshot mode cannot evaluate color-contrast (JSDOM has no canvas-backed layout). Comparing axe counts across modes reads measurement loss as improvement."
+            },
+            "colorContrastEvaluated": { "type": ["boolean", "null"] },
+            "note": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -86,6 +86,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { stripCommentsAndStrings } from "./gate-sitemap-source";
+import { beginFragment } from "./snapshot";
 
 export type CheckResult = {
   name: string;
@@ -546,8 +547,10 @@ function loadSourceConfig(): SourceGateConfig {
 async function main(): Promise<void> {
   const cwd = process.cwd();
   const config = loadSourceConfig();
+  const fragment = beginFragment("gate-conversion-instrumentation-source");
 
   if (config.skip) {
+    fragment.provenance({ skipped: true, skipReason: config.skip.reason });
     console.log(
       `gate:conversion-instrumentation-source  SKIPPED: ${config.skip.reason}`,
     );
@@ -571,6 +574,18 @@ async function main(): Promise<void> {
   for (const check of filtered) {
     console.log(`  ${check.pass ? "✓" : "✗"} ${check.name}: ${check.detail}`);
   }
+
+  fragment.checks(filtered);
+  // relayPath is a route literal, not configuration. Measurement-id env var
+  // NAMES prove configuration presence; their VALUES never appear here, and
+  // the snapshot sanitizer redacts a G-XXXXXX shape even if one leaks into a
+  // check detail (gate-ai-instrumentation embeds one in its consent-gated
+  // exception message).
+  fragment.provenance({
+    relayPath: RELAY_PATH,
+    checksEvaluated: filtered.length,
+    projectDir: cwd.split("/").pop() ?? null,
+  });
 
   const failed = filtered.filter((c) => !c.pass);
   if (failed.length > 0) {
