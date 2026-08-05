@@ -31,6 +31,32 @@ export declare function resolveIdentity(options: {
 
 export declare function sanitizeParams(raw: unknown): Record<string, string | number | boolean>;
 
+/** Outcome of resolving the one effective measurement id from declared env keys. */
+export type MeasurementIdResolution =
+  | {
+      status: "VALID";
+      measurementId: string;
+      /** Every declared key that was populated with this value. */
+      sourceKeys: string[];
+      /** True when more than one declared key carried the same value. */
+      duplicate: boolean;
+    }
+  | { status: "MISSING"; keys: string[] }
+  /** Carries key NAMES only - never values - so an error cannot leak an id. */
+  | { status: "CONFLICT"; conflictingKeys: string[]; keys: string[] };
+
+/**
+ * Resolve exactly one effective measurement id, or refuse.
+ *
+ * Empty and whitespace-only values are absent. Surrounding whitespace is
+ * trimmed; the identifier is not otherwise rewritten. Two declared keys holding
+ * DIFFERENT values is a CONFLICT, not a precedence decision.
+ */
+export declare function resolveMeasurementId(
+  env: Record<string, string | undefined>,
+  keys: string[],
+): MeasurementIdResolution;
+
 export declare function isAllowedEvent(name: string, allowedEvents: readonly string[]): boolean;
 
 export interface MeasurementProtocolPayload {

@@ -177,7 +177,14 @@ export function sanitizeParams(raw) {
   for (const [key, value] of Object.entries(raw)) {
     if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(key)) continue;
     if (typeof value === "string") out[key] = value.slice(0, 500);
-    else if (typeof value === "number" || typeof value === "boolean") out[key] = value;
+    // NaN / Infinity / -Infinity are `typeof "number"` but JSON.stringify emits
+    // them as `null`, so an unguarded numeric param silently reaches GA4 as a
+    // null and the metric it was meant to carry is lost with no error anywhere.
+    // Dropping the PARAM rather than rejecting the EVENT is deliberate: a
+    // malformed score must not cost the conversion it belongs to.
+    else if (typeof value === "number") {
+      if (Number.isFinite(value)) out[key] = value;
+    } else if (typeof value === "boolean") out[key] = value;
   }
   return out;
 }
@@ -185,6 +192,65 @@ export function sanitizeParams(raw) {
 /** True when `name` is in the site's declared conversion allowlist. */
 export function isAllowedEvent(name, allowedEvents) {
   return Array.isArray(allowedEvents) && allowedEvents.includes(name);
+}
+
+/**
+ * Resolve the ONE effective measurement id from the declared env keys.
+ *
+ * WHY THIS IS NOT first-non-empty-wins any more.
+ *
+ * Until v0.11.3 this loop took the first populated key and stopped. Every
+ * consumer declares TWO keys - the default pair, or the explicit
+ * ["GA4_MEASUREMENT_ID", "NEXT_PUBLIC_GA4_ID"] used by siteclinic-web and
+ * adaauditreport-web - so a stale GA4_MEASUREMENT_ID silently outranked the
+ * correct public id and sent every conversion to a different property. Nothing
+ * reported it: the relay returned {ok:true}, GA4 returned 204, and the intended
+ * property simply stayed empty. That is the same silent-success signature as
+ * F-20260803-01, and it is undetectable from any status code.
+ *
+ * Ambiguous configuration is now a REFUSAL, not a coin flip. Refusing is loud,
+ * attributable, and fixable in one env edit; choosing silently is none of those.
+ *
+ * Returns one of:
+ *   { status: "VALID",    measurementId, sourceKeys, duplicate }
+ *   { status: "MISSING",  keys }
+ *   { status: "CONFLICT", conflictingKeys, keys }
+ *
+ * CONFLICT deliberately carries NO values, so a caller cannot leak a
+ * measurement id into an error string by accident. Empty and whitespace-only
+ * values are treated as absent; surrounding whitespace is trimmed and nothing
+ * else about the identifier is rewritten.
+ */
+export function resolveMeasurementId(env, keys) {
+  const declared = Array.isArray(keys) ? keys : [];
+  const populated = [];
+  for (const key of declared) {
+    const raw = env ? env[key] : undefined;
+    if (raw == null) continue;
+    const value = typeof raw === "string" ? raw.trim() : String(raw).trim();
+    if (value.length === 0) continue;
+    populated.push({ key, value });
+  }
+
+  if (populated.length === 0) {
+    return { status: "MISSING", keys: declared };
+  }
+
+  const distinct = [...new Set(populated.map((p) => p.value))];
+  if (distinct.length === 1) {
+    return {
+      status: "VALID",
+      measurementId: distinct[0],
+      sourceKeys: populated.map((p) => p.key),
+      duplicate: populated.length > 1,
+    };
+  }
+
+  return {
+    status: "CONFLICT",
+    conflictingKeys: populated.map((p) => p.key),
+    keys: declared,
+  };
 }
 
 /**
@@ -292,17 +358,25 @@ export function createTrackHandler(options) {
       const v = env[key];
       return typeof v === "string" ? v.trim() : v;
     };
-    let measurementId;
-    for (const key of measurementIdEnvKeys) {
-      const value = readEnv(key);
-      if (value) {
-        measurementId = value;
-        break;
-      }
-    }
+    const resolution = resolveMeasurementId(env, measurementIdEnvKeys);
     const apiSecret = readEnv("GA4_API_SECRET");
 
-    if (!measurementId || !apiSecret) {
+    // CONFLICT is checked FIRST and separately from MISSING. Collapsing them
+    // into one 503 would tell an operator "configure a measurement id" when the
+    // real problem is that they configured two, which sends them looking for an
+    // absent variable that is in fact present twice.
+    if (resolution.status === "CONFLICT") {
+      return jsonResponse(
+        {
+          error:
+            `Ambiguous GA4 configuration: ${resolution.conflictingKeys.join(" and ")} are both set to different measurement ids. ` +
+            `Refusing to choose - set exactly one, or make them identical. No event was sent.`,
+        },
+        503,
+      );
+    }
+
+    if (resolution.status === "MISSING" || !apiSecret) {
       return jsonResponse(
         {
           error:
@@ -311,6 +385,8 @@ export function createTrackHandler(options) {
         503,
       );
     }
+
+    const measurementId = resolution.measurementId;
 
     let raw;
     try {
