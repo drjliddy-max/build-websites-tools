@@ -42,8 +42,23 @@ export type MeasurementIdResolution =
       duplicate: boolean;
     }
   | { status: "MISSING"; keys: string[] }
+  /** One or more configured sources hold a value this relay cannot dispatch to.
+   *  Carries key NAMES only - never values, substrings, or lengths. */
+  | { status: "MALFORMED"; malformedKeys: string[]; keys: string[] }
   /** Carries key NAMES only - never values - so an error cannot leak an id. */
   | { status: "CONFLICT"; conflictingKeys: string[]; keys: string[] };
+
+/**
+ * True when `value` matches the supported GA4 Measurement ID shape
+ * (`G-` + 6..20 uppercase alphanumerics).
+ *
+ * An application-level supported-format contract, not a claim about Google's
+ * present or future identifier shapes. Malformed values are REFUSED, never
+ * repaired: GA4 answers 204 for an id it does not recognise and stores nothing,
+ * so accepting a typo is silent and permanent while refusing is loud and fixed
+ * by one env edit.
+ */
+export declare function isSupportedGa4MeasurementId(value: unknown): boolean;
 
 /**
  * Resolve exactly one effective measurement id, or refuse.
