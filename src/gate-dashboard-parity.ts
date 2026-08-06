@@ -27,6 +27,7 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { beginFragment } from "./snapshot";
 
 export interface RequiredGate {
   /** the src/<script>.ts gate to compose */
@@ -85,12 +86,29 @@ async function main(): Promise<void> {
   console.log(
     "gate:dashboard-parity - composing dashboard-readiness gates (Phase 3 Option A, site-side):",
   );
+  const fragment = beginFragment("gate-dashboard-parity");
   const results: GateResult[] = [];
   for (const gate of REQUIRED_READINESS_GATES) {
     console.log(`\n──────── ${gate.label} ────────`);
     results.push({ label: gate.label, ok: runComposedGate(gate.script, srcDir) });
   }
   const { ok, failed } = aggregateGateResults(results);
+
+  // This gate spawns the composed gates as subprocesses, and each writes its
+  // OWN fragment. Recording only the composition here avoids duplicating their
+  // results; fragment writes are overwrite-by-gate so the composed run replaces
+  // rather than appends.
+  fragment.provenance({
+    composedGates: REQUIRED_READINESS_GATES.map((g) => g.label),
+    failedGates: failed,
+  });
+  fragment.checks(
+    results.map((r) => ({
+      name: `composed ${r.label}`,
+      pass: r.ok,
+      detail: r.ok ? "passed" : "failed",
+    })),
+  );
   if (!ok) {
     console.error(
       `\ngate:dashboard-parity  FAIL: this site is missing required dashboard-readiness surfaces, so its Site Clinic board cannot reach parity:\n  - ${failed.join(

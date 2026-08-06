@@ -53,6 +53,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { beginFragment } from "./snapshot";
 
 const REQUIRED_JSONLD_TYPES = ["Organization", "WebSite"] as const;
 
@@ -535,8 +536,10 @@ function loadSourceConfig(): SourceGateConfig {
 async function main(): Promise<void> {
   const cwd = process.cwd();
   const config = loadSourceConfig();
+  const fragment = beginFragment("gate-ai-instrumentation-source");
 
   if (config.skip) {
+    fragment.provenance({ skipped: true, skipReason: config.skip.reason });
     console.log(
       `gate:ai-instrumentation-source  SKIPPED: ${config.skip.reason}`,
     );
@@ -555,6 +558,14 @@ async function main(): Promise<void> {
   for (const check of filtered) {
     console.log(`  ${check.pass ? "✓" : "✗"} ${check.name}: ${check.detail}`);
   }
+
+  fragment.checks(filtered);
+  // cwd is recorded as a basename only: the absolute path leaks the
+  // operator's filesystem layout into an artifact meant to leave the machine.
+  fragment.provenance({
+    filesScanned: filtered.length,
+    projectDir: path.basename(cwd),
+  });
 
   const failed = filtered.filter((c) => !c.pass);
   if (failed.length > 0) {

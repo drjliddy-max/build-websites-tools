@@ -216,6 +216,127 @@ export const dynamic = "force-dynamic";
 export const POST = createLnHandler({ ownHosts: ["example.com", "www.example.com"] });
 ```
 
+## Build snapshots (`gate-snapshot`)
+
+`gate-snapshot` records what the gates measured. It is **not a gate**: it does not evaluate your site and it does not decide whether your site is shippable.
+
+The gates already evaluate hundreds of facts per build - HTTP status, canonical, meta robots, headings, image alt, JSON-LD, sitemap membership, `lastmod` truthfulness, security headers, axe violations - and then discard all of it. Only the exit code survives. That is why sites accumulate no technical baseline. `gate-snapshot` is the write call.
+
+### Authorization and destination are separate
+
+```bash
+GATE_SNAPSHOT_ENABLED=1 npm run gate:all
+GATE_SNAPSHOT_ENABLED=1 npm run gate:snapshot
+```
+
+- **Authorization**: `GATE_SNAPSHOT_ENABLED` must be **exactly `1`**. Absent, empty, whitespace, `0`, `false`, `no`, `true`, `yes`, or any other value leaves the feature completely inert. One documented value removes the "which spellings count" ambiguity, and a typo fails closed.
+- **Destination**: fixed and **never caller-supplied**. Output goes to `<git-root>/.build-websites-tools/gate-snapshot/`. There is no path override, and no environment variable selects the output directory.
+
+`GATE_SNAPSHOT_DIR` is **not supported**. If it is set, its value is never interpreted as a path; the merger reports invalid configuration and exits nonzero without writing.
+
+Add to your `.gitignore`:
+
+```gitignore
+.build-websites-tools/
+```
+
+### Output
+
+```text
+<git-root>/.build-websites-tools/gate-snapshot/
+  fragments/
+    gate-ada.json          one per gate that ran
+    gate-seo.json
+  snapshot.json            the merged, schema-validated record
+```
+
+Each gate writes its own fragment because every gate runs as an isolated child process; `gate-snapshot` merges them.
+
+### Invoke the merger in an always-run step
+
+`gate:all` chains with `&&` so a failing gate stops the chain - correct, a failed gate must stop a deploy. But it also means a merger at the end never runs on exactly the builds whose state is most worth recording.
+
+```yaml
+- name: Gates
+  run: GATE_SNAPSHOT_ENABLED=1 npm run gate:all
+- name: Build snapshot
+  if: always()
+  run: GATE_SNAPSHOT_ENABLED=1 npm run gate:snapshot
+- uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: build-snapshot
+    path: .build-websites-tools/
+```
+
+Locally, after a failed chain, run `npm run gate:snapshot`. Gates that never ran are recorded as `not_run` - never as passing, never omitted.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | not authorized (inert default), or a snapshot was written |
+| `1` | authorized but evidence could not be produced: invalid configuration, non-repository invocation, confinement failure, schema-validation failure, write failure, internal error |
+
+A `partial` snapshot still exits `0`: a partial record is valid evidence, and the reason it is partial is usually a gate failure the build already reported. Only an inability to *produce* evidence is a nonzero exit.
+
+### Completeness
+
+`complete` requires **all** of: valid configuration, available build identity, a **non-empty** expected-gate set, exactly one valid fragment per expected gate, and no `not_run`, `skipped`, malformed, or unknown gate. `reason` is `null` if and only if the status is `complete`.
+
+A gate outcome of `fail` is compatible with `complete`: completeness describes **evidence coverage**, not success. Zero gates and zero fragments can never be `complete`.
+
+### Skipped gates
+
+A gate a site has declared off exits `0` having measured nothing. That is recorded as outcome **`skipped`** - never `pass`. Treating it as a pass would assert a verification that never happened.
+
+A skipped gate is listed in `completeness.skipped`, counted in `summary.gatesSkipped`, and **prevents `complete`**, because the evidence set has a hole.
+
+### Fragment version
+
+Every fragment carries `fragmentSchemaVersion`, which must be exactly the integer `1`. It is **mandatory**: an unversioned fragment is malformed, not assumed to be version 1. A future version fails closed rather than being downgraded and reinterpreted.
+
+### Schema
+
+`schema/build-snapshot-v1.schema.json` ships with the package and is the source of truth. Every generated snapshot is validated against it **before** it replaces a previously valid `snapshot.json`; a document that fails validation is discarded and the previous snapshot is left untouched.
+
+Validation runs in two layers. **Structural**: the shipped JSON Schema, using a dependency-free validator whose supported-keyword set is a registry - every keyword is either executed or rejected, so a schema construct can never be silently ignored. **Semantic**: cross-field truth JSON Schema cannot express, such as "a complete snapshot has a null reason", "summary counts match the gate entries", and "a skipped gate cannot appear in a complete snapshot".
+
+| Field | Meaning |
+|---|---|
+| `snapshotId` | Content address over site, commit, build, environment, config hash and full check results. Excludes `capturedAt`, so two merges of one build are identical. |
+| `site.gateConfigHash` | Hash of measurement **scope**. A change means totals moved for scope reasons, not necessarily quality. |
+| `build.environment` | `production` \| `preview` \| `development` \| `local` \| `unknown`. A local or preview snapshot is never production evidence. |
+| `build.commitSha` | Never invented; `null` when it cannot be established. |
+| `completeness.status` | `complete` \| `partial` \| `error`. |
+| `gates[].outcome` | `pass` \| `fail` \| `error` \| `not_run`. |
+| `summary.comparability.adaScanMode` | `browser` or `html-snapshot`. **Axe counts are not comparable across modes** - `html-snapshot` cannot evaluate `color-contrast`. |
+
+### Atomicity, durability and concurrency
+
+`snapshot.json` is replaced atomically. The payload is written to an **exclusively created** temp file (`wx`) with an unpredictable name in the same directory, flushed with `fsync`, then renamed over the target. A **flush failure is fatal** - it is never swallowed, because renaming possibly-unflushed bytes into place would report a success the file may not contain. Temp files are removed on every failure path.
+
+**Durability contract:** this guarantees **atomic visibility** - a reader sees either the whole previous file or the whole new one, never a partial write. The containing directory is flushed on a best-effort basis where the platform supports it, but Phase 1 does **not** claim the replacement survives sudden power loss immediately after rename.
+
+**Symlink-swap boundary:** canonicalizing a path once is insufficient, because every later syscall re-resolves it. The artifact directory's device+inode identity is captured after canonicalization and re-verified immediately before temp creation, before rename, and after rename. Any change fails closed, and cleanup only ever touches the verified directory.
+
+**Concurrency policy: serialized.** Mergers take an exclusive lock in the artifact directory. Atomic rename protects bytes but not *ordering* - a slower merger reading older fragments could otherwise overwrite newer evidence, so "last writer wins" is not a sufficient guarantee unless "last" is mechanically defined. A merger that cannot take the lock exits `1` rather than racing. A lock older than 60 seconds is treated as abandoned and reclaimed.
+
+### Privacy
+
+Snapshots never contain environment-variable **values**, API keys, tokens, cookies, authorization headers, request or response bodies, or customer form data. Environment variables appear by **name** only, and `process.env` is never iterated.
+
+Redaction is both **shape-aware** (credential-looking values anywhere in the document) and **key-aware** (a value under `apiSecret`, `token`, `password` and similar keys is redacted even when the value itself has no recognizable shape).
+
+`gate-seo` records check **names and pass/fail only**, never the raw detail text: a detail embeds observed page content, and the snapshot can be uploaded as a build artifact. Failing details remain in the build log. axe results record rule id, impact and node **count**, never `node.html` or `node.target` selectors.
+
+### What a snapshot does NOT prove
+
+- Not search visibility, AI citation, traffic, leads, or revenue. Those are observational and belong to runtime monitoring, not a build gate.
+- It does not replace a live audit. This measures the **build**; an audit measures the **live site over time**.
+- It does not create history retroactively. History starts at first emission.
+- **A snapshot is not a pass.** It records what was measured, including failures and gates that never ran.
+
 ## What this package does NOT do (and where Site Clinic comes in)
 
 `build-websites-tools` is build-time enforcement. It runs once per deploy, fails the build if something's wrong, and exits. That's the whole job.

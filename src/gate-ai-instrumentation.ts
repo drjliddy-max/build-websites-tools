@@ -34,6 +34,7 @@ import { JSDOM } from "jsdom";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureBaseUrlReady } from "./ensure-base-url";
+import { beginFragment } from "./snapshot";
 
 export type CheckResult = {
   name: string;
@@ -413,8 +414,13 @@ async function main(): Promise<void> {
     startupTimeoutMs,
     aiInstrumentation: aiConfig,
   } = loadMinimalConfig();
+  const fragment = beginFragment("gate-ai-instrumentation");
 
   if (aiConfig.skip) {
+    // A declared skip exits 0. Without this the recorder would derive
+    // outcome "pass" from the exit code and the snapshot would assert the
+    // contract was verified when it was never evaluated.
+    fragment.provenance({ skipped: true, skipReason: aiConfig.skip.reason });
     console.log(
       `gate:ai-instrumentation  SKIPPED: ${aiConfig.skip.reason}`,
     );
@@ -466,6 +472,13 @@ async function main(): Promise<void> {
       console.log(`  ${check.pass ? "✓" : "✗"} ${check.name}: ${check.detail}`);
     }
 
+    fragment.checks(filtered);
+    fragment.provenance({
+      baseUrl,
+      surfaces: Object.fromEntries(filtered.map((c) => [c.name, c.pass])),
+      checksEvaluated: filtered.length,
+    });
+
     const failed = filtered.filter((c) => !c.pass);
     if (failed.length > 0) {
       console.error(
@@ -482,6 +495,11 @@ async function main(): Promise<void> {
     );
   } catch (err) {
     console.error(`\ngate:ai-instrumentation  ERROR: ${(err as Error).message}`);
+    // An exception here is an execution ERROR, not a measured failure: the
+    // contract was never evaluated. Without this the recorder would derive
+    // outcome "fail" from the exit code, and the snapshot would assert we
+    // measured something we never reached.
+    fragment.provenance({ errored: true });
     process.exitCode = 1;
   } finally {
     await cleanup?.();
