@@ -644,10 +644,27 @@ async function main() {
       }
 
       const allChecks = [...httpChecks, ...structuralChecks];
-      // Prefix with the route so a merged fragment stays attributable: the
-      // gate emits the same check NAMES for every route.
+      /*
+       * Record check NAMES and pass/fail only - never the raw `detail`.
+       *
+       * A gate-seo detail embeds observed page content: title text, meta
+       * description text, canonical URLs, header values. The snapshot is an
+       * artifact that can be uploaded from a build, so persisting that text
+       * moves customer-controlled content out of the build environment. The
+       * generic redactor only catches recognized credential SHAPES; ordinary
+       * prose passes through untouched.
+       *
+       * Names are safe: they are rule identifiers authored in this file, not
+       * page-derived. The failing detail stays in the build log, which is where
+       * a developer diagnosing the failure already looks. Structured,
+       * explicitly allow-listed per-route facts are Phase 2.
+       */
       fragment.checks(
-        allChecks.map((c) => ({ ...c, name: `${route} :: ${c.name}` })),
+        allChecks.map((c) => ({
+          name: `${route} :: ${c.name}`,
+          pass: c.pass,
+          detail: c.pass ? "ok" : "failed",
+        })),
       );
       const failed = allChecks.filter((check) => !check.pass);
       if (failed.length === 0) {

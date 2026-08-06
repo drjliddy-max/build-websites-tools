@@ -495,6 +495,11 @@ async function main(): Promise<void> {
     );
   } catch (err) {
     console.error(`\ngate:ai-instrumentation  ERROR: ${(err as Error).message}`);
+    // An exception here is an execution ERROR, not a measured failure: the
+    // contract was never evaluated. Without this the recorder would derive
+    // outcome "fail" from the exit code, and the snapshot would assert we
+    // measured something we never reached.
+    fragment.provenance({ errored: true });
     process.exitCode = 1;
   } finally {
     await cleanup?.();

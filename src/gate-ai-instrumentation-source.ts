@@ -564,7 +564,7 @@ async function main(): Promise<void> {
   // operator's filesystem layout into an artifact meant to leave the machine.
   fragment.provenance({
     filesScanned: filtered.length,
-    projectDir: cwd.split("/").pop() ?? null,
+    projectDir: path.basename(cwd),
   });
 
   const failed = filtered.filter((c) => !c.pass);

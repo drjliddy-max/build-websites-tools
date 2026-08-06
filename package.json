@@ -59,7 +59,11 @@
   "files": [
     "bin",
     "src",
-    "README.md"
+    "!src/__tests__",
+    "schema",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

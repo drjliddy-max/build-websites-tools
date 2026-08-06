@@ -584,7 +584,7 @@ async function main(): Promise<void> {
   fragment.provenance({
     relayPath: RELAY_PATH,
     checksEvaluated: filtered.length,
-    projectDir: cwd.split("/").pop() ?? null,
+    projectDir: path.basename(cwd),
   });
 
   const failed = filtered.filter((c) => !c.pass);

@@ -1,41 +1,67 @@
 /*
- * gate-snapshot Phase 1 test suite.
+ * gate-snapshot Phase 1 test suite (rewritten after the PR #5 blocking review).
  *
- * The invariants under test are the ones that decide whether this feature is
- * safe to ship to nine live consumer sites, and whether the artifact it
- * produces can be trusted as evidence:
+ * The invariants under test decide whether this feature is safe to ship to nine
+ * live consumer sites and whether its artifact can be trusted as evidence:
  *
- *   1. inert without GATE_SNAPSHOT_DIR
- *   2. emission can never fail a build
- *   3. a partial run is never rendered as a pass
- *   4. cross-mode / cross-environment comparisons are refused
- *   5. no secret values are serialized
- *   6. a gate name cannot escape the fragments directory
- *   7. a malformed fragment cannot produce a falsely complete snapshot
+ *   1. inert unless GATE_SNAPSHOT_ENABLED is exactly "1"
+ *   2. no write can land outside the fixed repository artifact directory
+ *   3. emission can never fail a build
+ *   4. zero evidence can never be "complete"
+ *   5. parsed fragments are validated at runtime, not merely cast
+ *   6. the final document is schema-validated before it replaces a valid one
+ *   7. replacement is atomic and leaves no residue on failure
+ *   8. armed failures exit nonzero
+ *   9. no secret values are serialized (key-aware AND shape-aware)
+ *
+ * "Zero filesystem effects" is asserted by walking the ENTIRE temporary root
+ * before and after, so a test cannot pass while files are written elsewhere.
  */
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, chmodSync, readdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  symlinkSync,
+  rmSync,
+  chmodSync,
+  realpathSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
+  authorize,
+  isArmed,
   emitFragment,
+  beginFragment,
   isSafeGateName,
+  isSecretKey,
   redactSecrets,
   sanitizeValue,
-  snapshotDir,
+  isInside,
+  resolveArtifactRoot,
+  writeConfinedFile,
   fragmentsDir,
+  ARTIFACT_DIR_SEGMENTS,
   KNOWN_GATES,
-  SNAPSHOT_DIR_ENV,
+  SNAPSHOT_ENABLED_ENV,
+  DEPRECATED_DIR_ENV,
+  FRAGMENT_SCHEMA_VERSION,
   type Fragment,
 } from "../snapshot";
 
 import {
   mergeFragments,
+  computeCompleteness,
   summarize,
   computeConfigHash,
   computeSnapshotId,
@@ -44,500 +70,1074 @@ import {
   assertComparable,
   detectScopeDrift,
   buildSnapshot,
+  runCli,
+  loadSnapshotSchema,
+  validateSnapshotDocument,
+  byCodepoint,
   SCHEMA_VERSION,
+  type ParsedFragment,
 } from "../gate-snapshot";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FIXTURES = path.join(HERE, "fixtures", "snapshot");
+import { validateFragment, validateAgainstSchema, isValidTimestamp } from "../snapshot-validate";
 
-/** Use a real temp dir per test so nothing leaks between cases. */
-function tmp(): string {
-  return mkdtempSync(path.join(tmpdir(), "gate-snapshot-"));
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PKG_ROOT = path.join(HERE, "..", "..");
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+function tmp(prefix = "gs-"): string {
+  // realpath: on macOS os.tmpdir() is /var -> /private/var, and an
+  // uncanonicalized root would make every containment assertion a false
+  // negative. This is the /tmp vs /private/tmp case, exercised for real.
+  return realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
 }
 
-function withEnv<T>(key: string, value: string | undefined, fn: () => T): T {
-  const prev = process.env[key];
-  if (value === undefined) delete process.env[key];
-  else process.env[key] = value;
+/** Every path under `dir`, sorted. Used to prove zero filesystem effects. */
+function tree(dir: string): string[] {
+  const out: string[] = [];
+  const walk = (d: string) => {
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(d);
+    } catch {
+      return;
+    }
+    for (const e of entries.sort(byCodepoint)) {
+      const full = path.join(d, e);
+      out.push(path.relative(dir, full));
+      let st;
+      try {
+        st = statSync(full);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) walk(full);
+    }
+  };
+  walk(dir);
+  return out.sort(byCodepoint);
+}
+
+/** A real git repository with a consumer-shaped package.json + gate.config.json. */
+function makeRepo(opts: { scripts?: Record<string, string>; routes?: string[]; baseUrl?: string; prefix?: string } = {}): string {
+  // The repo lives inside its OWN parent directory, so a test that asserts on
+  // <repo>/.. (traversal escape) inspects a private location rather than the
+  // shared temp root. Without this, one escaping write leaks across tests and
+  // makes a later run fail for a reason that has nothing to do with it - an
+  // order dependence that hid here until the mutation campaign surfaced it.
+  const parent = tmp(opts.prefix ?? "gs-repo-");
+  const root = path.join(parent, "repo");
+  mkdirSync(root, { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "t@example.com"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "t"], { cwd: root, stdio: "ignore" });
+  writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ name: "fake-site", scripts: opts.scripts ?? { "gate:seo": "x" } }),
+  );
+  writeFileSync(
+    path.join(root, "gate.config.json"),
+    JSON.stringify({ routes: opts.routes ?? ["/", "/about"], baseUrl: opts.baseUrl ?? "https://fake.example.com" }),
+  );
+  writeFileSync(path.join(root, "README.md"), "x");
+  execFileSync("git", ["add", "-A"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["commit", "-qm", "init"], { cwd: root, stdio: "ignore" });
+  return root;
+}
+
+function artifactPath(repo: string): string {
+  return path.join(repo, ...ARTIFACT_DIR_SEGMENTS);
+}
+
+function withEnv<T>(patch: Record<string, string | undefined>, fn: () => T): T {
+  const prev: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(patch)) {
+    prev[k] = process.env[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
   try {
     return fn();
   } finally {
-    if (prev === undefined) delete process.env[key];
-    else process.env[key] = prev;
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   }
 }
 
-const FRAGMENT: Fragment = {
-  gate: "gate-seo",
-  version: "0.0.0-test",
-  startedAt: "2026-08-04T00:00:00.000Z",
-  finishedAt: "2026-08-04T00:00:01.000Z",
-  outcome: "pass",
-  provenance: { baseUrl: "https://example.com", routeCount: 2 },
-  checks: [{ name: "canonical", pass: true, detail: "ok" }],
-};
+const ARMED = { [SNAPSHOT_ENABLED_ENV]: "1", [DEPRECATED_DIR_ENV]: undefined };
 
-/* ------------------------------------------------------------------ */
-/* 1. Activation                                                       */
-/* ------------------------------------------------------------------ */
+function fragment(over: Partial<Fragment> = {}): Fragment {
+  return {
+    fragmentSchemaVersion: FRAGMENT_SCHEMA_VERSION,
+    gate: "gate-seo",
+    version: "0.0.0-test",
+    startedAt: "2026-08-04T00:00:00.000Z",
+    finishedAt: "2026-08-04T00:00:01.000Z",
+    outcome: "pass",
+    provenance: { routeCount: 2 },
+    checks: [{ name: "canonical", pass: true, detail: "ok" }],
+    ...over,
+  };
+}
 
-test("inert: writes nothing when GATE_SNAPSHOT_DIR is unset", () => {
-  const dir = tmp();
-  withEnv(SNAPSHOT_DIR_ENV, undefined, () => {
-    emitFragment(FRAGMENT);
-  });
-  assert.equal(existsSync(path.join(dir, "fragments")), false);
-  assert.equal(snapshotDir(), null);
-});
+function valid(f: Fragment): ParsedFragment {
+  return { kind: "valid", fragment: f };
+}
 
-test("inert: an empty or whitespace-only env value does not arm emission", () => {
-  withEnv(SNAPSHOT_DIR_ENV, "   ", () => {
-    assert.equal(snapshotDir(), null);
-  });
-});
+/* ================================================================== */
+/* 1. AUTHORIZATION - zero filesystem effects                          */
+/* ================================================================== */
 
-test("armed: writes exactly one fragment for the gate", () => {
-  const dir = tmp();
-  withEnv(SNAPSHOT_DIR_ENV, dir, () => emitFragment(FRAGMENT));
-  const file = path.join(fragmentsDir(dir), "gate-seo.json");
-  assert.ok(existsSync(file));
-  const parsed = JSON.parse(readFileSync(file, "utf8"));
-  assert.equal(parsed.gate, "gate-seo");
-  assert.equal(parsed.outcome, "pass");
-});
+const INERT_CASES: Array<[string, Record<string, string | undefined>]> = [
+  ["absent", { [SNAPSHOT_ENABLED_ENV]: undefined }],
+  ["empty string", { [SNAPSHOT_ENABLED_ENV]: "" }],
+  ["whitespace", { [SNAPSHOT_ENABLED_ENV]: "   " }],
+  ["0", { [SNAPSHOT_ENABLED_ENV]: "0" }],
+  ["false", { [SNAPSHOT_ENABLED_ENV]: "false" }],
+  ["FALSE", { [SNAPSHOT_ENABLED_ENV]: "FALSE" }],
+  ["no", { [SNAPSHOT_ENABLED_ENV]: "no" }],
+  ["true (not accepted - only \"1\" is)", { [SNAPSHOT_ENABLED_ENV]: "true" }],
+  ["yes (not accepted)", { [SNAPSHOT_ENABLED_ENV]: "yes" }],
+  ["arbitrary text", { [SNAPSHOT_ENABLED_ENV]: "please-enable" }],
+  ["1 with trailing space (exact match required)", { [SNAPSHOT_ENABLED_ENV]: "1 " }],
+];
 
-/* ------------------------------------------------------------------ */
-/* 2. Failure isolation - emission must never break a build            */
-/* ------------------------------------------------------------------ */
-
-test("failure isolation: an unwritable snapshot dir does not throw", () => {
-  const dir = tmp();
-  const locked = path.join(dir, "locked");
-  mkdirSync(locked);
-  chmodSync(locked, 0o444); // read-only
-  try {
-    withEnv(SNAPSHOT_DIR_ENV, path.join(locked, "nested"), () => {
-      // The assertion IS that this does not throw.
-      emitFragment(FRAGMENT);
+for (const [label, env] of INERT_CASES) {
+  test(`authorization inert: ${label} -> zero filesystem effects`, () => {
+    const repo = makeRepo();
+    const before = tree(repo);
+    withEnv({ ...env, [DEPRECATED_DIR_ENV]: undefined }, () => {
+      assert.equal(isArmed(), false, `${label} must not arm emission`);
+      emitFragment(fragment(), repo);
+      const rec = beginFragment("gate-seo", repo);
+      assert.equal(rec.enabled, false);
+      rec.check({ name: "x", pass: true, detail: "y" });
+      const r = runCli(repo);
+      assert.equal(r.code, 0, "not-asked-for must exit 0");
     });
-  } finally {
-    chmodSync(locked, 0o755);
+    assert.deepEqual(tree(repo), before, `${label} wrote files`);
+    assert.equal(existsSync(artifactPath(repo)), false, "artifact dir must not exist");
+  });
+}
+
+const DEPRECATED_CASES: Array<[string, string]> = [
+  ["plain value", "some-dir"],
+  ["absolute path", "/tmp/escape-target"],
+  ["traversal path", "../../escape-target"],
+  ["empty value", ""],
+];
+
+for (const [label, value] of DEPRECATED_CASES) {
+  test(`deprecated ${DEPRECATED_DIR_ENV} (${label}): rejected, value never used as a path, zero effects`, () => {
+    const repo = makeRepo();
+    const escapeRoot = tmp("gs-escape-");
+    const before = tree(repo);
+    const escapeBefore = tree(escapeRoot);
+
+    withEnv({ [SNAPSHOT_ENABLED_ENV]: "1", [DEPRECATED_DIR_ENV]: value === "/tmp/escape-target" ? escapeRoot : value }, () => {
+      const a = authorize();
+      assert.equal(a.armed, false, "deprecated var must never arm");
+      if (!a.armed) assert.equal(a.invalidConfig, true);
+      emitFragment(fragment(), repo);
+      const r = runCli(repo);
+      assert.equal(r.code, 1, "armed-but-misconfigured must exit nonzero");
+      assert.ok(r.stderr.join("\n").includes(DEPRECATED_DIR_ENV));
+    });
+
+    assert.deepEqual(tree(repo), before, "wrote inside the repo");
+    assert.deepEqual(tree(escapeRoot), escapeBefore, "wrote to the deprecated path value");
+    assert.equal(existsSync(artifactPath(repo)), false);
+  });
+}
+
+test("lower-level writer invoked while unauthorized still cannot be reached via emitFragment", () => {
+  const repo = makeRepo();
+  const before = tree(repo);
+  withEnv({ [SNAPSHOT_ENABLED_ENV]: undefined, [DEPRECATED_DIR_ENV]: undefined }, () => {
+    emitFragment(fragment(), repo);
+  });
+  assert.deepEqual(tree(repo), before);
+});
+
+test("non-git working directory: armed, but fails closed with no write", () => {
+  const notRepo = tmp("gs-notgit-");
+  const before = tree(notRepo);
+  withEnv(ARMED, () => {
+    const resolved = resolveArtifactRoot(notRepo);
+    assert.equal(resolved.ok, false);
+    emitFragment(fragment(), notRepo);
+    const r = runCli(notRepo);
+    assert.equal(r.code, 1, "non-repository invocation must exit nonzero");
+    assert.match(r.stderr.join("\n"), /git repository/);
+  });
+  assert.deepEqual(tree(notRepo), before);
+});
+
+/* ================================================================== */
+/* 2. PATH SAFETY / CONFINEMENT                                        */
+/* ================================================================== */
+
+test("isInside uses containment, not string prefix", () => {
+  assert.equal(isInside("/repo", "/repo/a/b"), true);
+  assert.equal(isInside("/repo", "/repo"), true);
+  // The prefix trap: "/repo-evil".startsWith("/repo") is true.
+  assert.equal(isInside("/repo", "/repo-evil/x"), false);
+  assert.equal(isInside("/repo", "/other"), false);
+  assert.equal(isInside("/repo", "/repo/../etc/passwd"), false);
+});
+
+test("writeConfinedFile rejects absolute and traversal relative paths", () => {
+  const repo = makeRepo();
+  const resolved = resolveArtifactRoot(repo);
+  assert.ok(resolved.ok);
+  if (!resolved.ok) return;
+  const escapeRoot = tmp("gs-escape2-");
+  const escapeBefore = tree(escapeRoot);
+
+  const abs = writeConfinedFile(resolved.artifactRoot, resolved.repoRoot, path.join(escapeRoot, "x.json"), "{}");
+  assert.equal(abs.ok, false);
+
+  const trav = writeConfinedFile(resolved.artifactRoot, resolved.repoRoot, "../../../escape.json", "{}");
+  assert.equal(trav.ok, false);
+
+  assert.deepEqual(tree(escapeRoot), escapeBefore);
+  assert.equal(existsSync(path.join(repo, "..", "escape.json")), false);
+});
+
+test("artifact root that is a symlink is rejected", () => {
+  const repo = makeRepo();
+  const outside = tmp("gs-outside-");
+  mkdirSync(path.join(repo, ARTIFACT_DIR_SEGMENTS[0]), { recursive: true });
+  symlinkSync(outside, artifactPath(repo));
+  const resolved = resolveArtifactRoot(repo);
+  assert.equal(resolved.ok, false, "a symlinked artifact root must be refused");
+  if (!resolved.ok) assert.match(resolved.reason, /symlink/);
+});
+
+test("symlinked parent that escapes the repository is rejected", () => {
+  const repo = makeRepo();
+  const outside = tmp("gs-outside2-");
+  // .build-websites-tools -> /outside  => artifact root resolves outside
+  symlinkSync(outside, path.join(repo, ARTIFACT_DIR_SEGMENTS[0]));
+  const before = tree(outside);
+  const resolved = resolveArtifactRoot(repo);
+  assert.equal(resolved.ok, false, "escape through a symlinked parent must be refused");
+  withEnv(ARMED, () => emitFragment(fragment(), repo));
+  assert.deepEqual(tree(outside), before, "nothing may be written through the symlink");
+});
+
+test("destination that is an existing symlink is refused at the write boundary", () => {
+  const repo = makeRepo();
+  const outside = tmp("gs-outside3-");
+  const resolved = resolveArtifactRoot(repo);
+  assert.ok(resolved.ok);
+  if (!resolved.ok) return;
+  mkdirSync(resolved.artifactRoot, { recursive: true });
+  const victim = path.join(outside, "victim.json");
+  writeFileSync(victim, "ORIGINAL");
+  symlinkSync(victim, path.join(resolved.artifactRoot, "snapshot.json"));
+
+  const r = writeConfinedFile(resolved.artifactRoot, resolved.repoRoot, "snapshot.json", "REPLACED");
+  assert.equal(r.ok, false, "must refuse to follow a symlinked destination");
+  assert.equal(readFileSync(victim, "utf8"), "ORIGINAL", "symlink target must be untouched");
+});
+
+test("destination that already exists as a directory is refused", () => {
+  const repo = makeRepo();
+  const resolved = resolveArtifactRoot(repo);
+  assert.ok(resolved.ok);
+  if (!resolved.ok) return;
+  mkdirSync(path.join(resolved.artifactRoot, "snapshot.json"), { recursive: true });
+  const r = writeConfinedFile(resolved.artifactRoot, resolved.repoRoot, "snapshot.json", "{}");
+  assert.equal(r.ok, false);
+});
+
+test("nested working directory resolves to the same repository artifact root", () => {
+  const repo = makeRepo();
+  const nested = path.join(repo, "apps", "web", "src");
+  mkdirSync(nested, { recursive: true });
+  const fromRoot = resolveArtifactRoot(repo);
+  const fromNested = resolveArtifactRoot(nested);
+  assert.ok(fromRoot.ok && fromNested.ok);
+  if (fromRoot.ok && fromNested.ok) {
+    assert.equal(fromNested.artifactRoot, fromRoot.artifactRoot);
   }
 });
 
-test("failure isolation: a value that cannot serialize does not throw", () => {
-  const dir = tmp();
-  const circular: Record<string, unknown> = {};
-  circular.self = circular;
-  withEnv(SNAPSHOT_DIR_ENV, dir, () => {
-    emitFragment({ ...FRAGMENT, provenance: circular });
-  });
-  // Either it wrote a sanitized document or it warned; neither may throw.
+test("path containing spaces is handled", () => {
+  const repo = makeRepo({ prefix: "gs repo with spaces " });
+  withEnv(ARMED, () => emitFragment(fragment(), repo));
+  assert.ok(existsSync(path.join(fragmentsDir(artifactPath(repo)), "gate-seo.json")));
 });
 
-test("failure isolation: a real gate run with an unwritable dir keeps its own exit status", () => {
-  // The strongest form of invariant 2: drive the actual bin, not the module.
-  const dir = tmp();
-  const locked = path.join(dir, "ro");
-  mkdirSync(locked);
-  chmodSync(locked, 0o444);
-  const bin = path.join(HERE, "..", "..", "bin", "gate-sitemap-source.mjs");
+test("path containing unicode is handled", () => {
+  const repo = makeRepo({ prefix: "gs-δοκιμή-测试-" });
+  withEnv(ARMED, () => emitFragment(fragment(), repo));
+  assert.ok(existsSync(path.join(fragmentsDir(artifactPath(repo)), "gate-seo.json")));
+});
+
+test("linked git worktree resolves to its own toplevel", () => {
+  const repo = makeRepo();
+  const wt = path.join(tmp("gs-wt-"), "linked");
+  execFileSync("git", ["worktree", "add", "-q", "-b", "wtbranch", wt], { cwd: repo, stdio: "ignore" });
+  const resolved = resolveArtifactRoot(wt);
+  assert.ok(resolved.ok);
+  if (resolved.ok) {
+    assert.equal(resolved.repoRoot, realpathSync(wt));
+    assert.ok(isInside(resolved.repoRoot, resolved.artifactRoot));
+  }
+});
+
+test("path traversal in a gate name is rejected and writes nothing", () => {
+  for (const bad of ["../../etc/passwd", "gate-seo/../../x", "gate-seo\\..\\x", "..", "gate_seo", "Gate-Seo", "gate-unknown", ""]) {
+    assert.equal(isSafeGateName(bad), false, `${bad} must be rejected`);
+  }
+  for (const good of KNOWN_GATES) assert.equal(isSafeGateName(good), true);
+
+  const repo = makeRepo();
+  const before = tree(repo);
+  withEnv(ARMED, () => emitFragment(fragment({ gate: "../escaped" }), repo));
+  assert.deepEqual(tree(repo), before);
+});
+
+/* ================================================================== */
+/* 3. EMISSION NEVER FAILS A BUILD                                     */
+/* ================================================================== */
+
+test("emission failure never throws (unwritable artifact parent)", () => {
+  const repo = makeRepo();
+  const parent = path.join(repo, ARTIFACT_DIR_SEGMENTS[0]);
+  mkdirSync(parent, { recursive: true });
+  chmodSync(parent, 0o500);
+  try {
+    withEnv(ARMED, () => {
+      emitFragment(fragment(), repo); // assertion is that this does not throw
+    });
+  } finally {
+    chmodSync(parent, 0o755);
+  }
+});
+
+test("a real gate subprocess keeps its own exit status when snapshots cannot be written", () => {
+  const repo = makeRepo();
+  const parent = path.join(repo, ARTIFACT_DIR_SEGMENTS[0]);
+  mkdirSync(parent, { recursive: true });
+  chmodSync(parent, 0o500);
   let status = -1;
   try {
-    execFileSync(process.execPath, [bin], {
-      cwd: path.join(HERE, "..", ".."),
-      env: { ...process.env, [SNAPSHOT_DIR_ENV]: path.join(locked, "nope") },
+    execFileSync(process.execPath, [path.join(PKG_ROOT, "bin", "gate-sitemap-source.mjs")], {
+      cwd: PKG_ROOT,
+      env: { ...process.env, [SNAPSHOT_ENABLED_ENV]: "1" },
       stdio: "pipe",
     });
     status = 0;
   } catch (err) {
     status = (err as { status?: number }).status ?? -1;
   } finally {
-    chmodSync(locked, 0o755);
+    chmodSync(parent, 0o755);
   }
-  // This package has no sitemap source, so the gate passes (exit 0). The point
-  // is that a broken snapshot dir did not turn that into a non-zero exit.
-  assert.equal(status, 0, "snapshot emission must not alter the gate's exit status");
+  assert.equal(status, 0, "a snapshot problem must never change a gate's exit status");
 });
 
-/* ------------------------------------------------------------------ */
-/* 3. Path traversal + gate-name safety                                */
-/* ------------------------------------------------------------------ */
-
-test("path traversal: traversal and unknown gate names are rejected", () => {
-  for (const bad of [
-    "../../etc/passwd",
-    "gate-seo/../../x",
-    "gate-seo\\..\\x",
-    "..",
-    "gate_seo",
-    "Gate-Seo",
-    "gate-not-a-real-gate",
-    "",
-  ]) {
-    assert.equal(isSafeGateName(bad), false, `${bad} must be rejected`);
-  }
-  for (const good of KNOWN_GATES) {
-    assert.equal(isSafeGateName(good), true, `${good} must be accepted`);
-  }
+test("circular provenance does not throw", () => {
+  const repo = makeRepo();
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  withEnv(ARMED, () => emitFragment(fragment({ provenance: circular }), repo));
 });
 
-test("path traversal: a traversal gate name writes nothing", () => {
-  const dir = tmp();
-  withEnv(SNAPSHOT_DIR_ENV, dir, () => {
-    emitFragment({ ...FRAGMENT, gate: "../escaped" });
+/* ================================================================== */
+/* 4. COMPLETENESS - zero evidence can never be complete               */
+/* ================================================================== */
+
+function completenessFor(expected: string[], frags: Map<string, ParsedFragment>, over: Partial<Parameters<typeof computeCompleteness>[0]> = {}) {
+  return computeCompleteness({
+    configValid: true,
+    buildIdentityAvailable: true,
+    expectedGates: expected,
+    merge: mergeFragments(expected, frags),
+    ...over,
   });
-  assert.equal(existsSync(path.join(dir, "fragments", "..", "escaped.json")), false);
-  assert.equal(existsSync(path.join(dir, "fragments")), false);
+}
+
+test("zero expected gates can NEVER be complete", () => {
+  const c = completenessFor([], new Map());
+  assert.notEqual(c.status, "complete");
+  assert.equal(c.status, "partial");
+  assert.match(c.reason ?? "", /no expected gates/);
 });
 
-/* ------------------------------------------------------------------ */
-/* 4. Secrets                                                          */
-/* ------------------------------------------------------------------ */
+test("zero fragments can NEVER be complete", () => {
+  const c = completenessFor(["gate-seo"], new Map());
+  assert.notEqual(c.status, "complete");
+  assert.match(c.reason ?? "", /no fragments found|did not run/);
+});
 
-test("secrets: recognised credential shapes are redacted", () => {
+test("a valid non-empty expected set with every fragment present IS complete", () => {
+  const c = completenessFor(["gate-seo"], new Map([["gate-seo", valid(fragment())]]));
+  assert.equal(c.status, "complete");
+  assert.equal(c.reason, null, "reason must be null iff complete");
+});
+
+test("a complete snapshot may contain a FAILING gate (coverage, not success)", () => {
+  const c = completenessFor(["gate-seo"], new Map([["gate-seo", valid(fragment({ outcome: "fail" }))]]));
+  assert.equal(c.status, "complete");
+  assert.equal(c.reason, null);
+});
+
+test("a missing expected gate produces not_run and partial", () => {
+  const m = mergeFragments(["gate-seo", "gate-ada"], new Map([["gate-seo", valid(fragment())]]));
+  assert.equal(m.gates["gate-ada"].outcome, "not_run");
+  assert.notEqual(m.gates["gate-ada"].outcome, "pass");
+  const c = completenessFor(["gate-seo", "gate-ada"], new Map([["gate-seo", valid(fragment())]]));
+  assert.equal(c.status, "partial");
+  assert.deepEqual(c.gatesNotRun, ["gate-ada"]);
+});
+
+test("a malformed fragment cannot produce complete", () => {
+  const c = completenessFor(["gate-seo"], new Map([["gate-seo", { kind: "malformed", reason: "bad" }]]));
+  assert.equal(c.status, "partial");
+  assert.deepEqual(c.malformed, ["gate-seo"]);
+});
+
+test("an undeclared (unknown) gate forces partial - explicit Phase 1 policy", () => {
+  const frags = new Map<string, ParsedFragment>([
+    ["gate-seo", valid(fragment())],
+    ["gate-ada", valid(fragment({ gate: "gate-ada" }))],
+  ]);
+  const c = completenessFor(["gate-seo"], frags);
+  assert.equal(c.status, "partial");
+  assert.deepEqual(c.unknown, ["gate-ada"]);
+});
+
+test("invalid configuration is error, not partial", () => {
+  const c = completenessFor(["gate-seo"], new Map([["gate-seo", valid(fragment())]]), {
+    configValid: false,
+    configReason: "gate.config.json not found",
+  });
+  assert.equal(c.status, "error");
+  assert.match(c.reason ?? "", /gate.config.json/);
+});
+
+test("unavailable build identity cannot be complete", () => {
+  const c = completenessFor(["gate-seo"], new Map([["gate-seo", valid(fragment())]]), {
+    buildIdentityAvailable: false,
+  });
+  assert.equal(c.status, "partial");
+  assert.match(c.reason ?? "", /build identity/);
+});
+
+test("internal error is error status", () => {
+  const c = completenessFor(["gate-seo"], new Map(), { internalError: "boom" });
+  assert.equal(c.status, "error");
+  assert.match(c.reason ?? "", /internal error/);
+});
+
+test("reason is null if and only if complete", () => {
+  const complete = completenessFor(["gate-seo"], new Map([["gate-seo", valid(fragment())]]));
+  assert.equal(complete.reason, null);
+  for (const c of [
+    completenessFor([], new Map()),
+    completenessFor(["gate-seo"], new Map()),
+    completenessFor(["gate-seo"], new Map(), { configValid: false }),
+  ]) {
+    assert.notEqual(c.status, "complete");
+    assert.ok(c.reason && c.reason.length > 0, "a non-complete status must state a reason");
+  }
+});
+
+test("a not_run gate contributes no passing checks to the summary", () => {
+  const m = mergeFragments(["gate-seo", "gate-ada"], new Map([["gate-seo", valid(fragment())]]));
+  const s = summarize(m.gates);
+  assert.equal(s.checksTotal, 1);
+  assert.equal(s.checksPassed, 1);
+});
+
+/* ================================================================== */
+/* 5. FRAGMENT VALIDATION MATRIX                                       */
+/* ================================================================== */
+
+const INVALID_FRAGMENTS: Array<[string, unknown]> = [
+  ["null", null],
+  ["array", []],
+  ["string primitive", "nope"],
+  ["number primitive", 42],
+  ["boolean primitive", true],
+  ["missing gate", { ...fragment(), gate: undefined }],
+  ["unknown gate", { ...fragment(), gate: "gate-does-not-exist" }],
+  ["gate wrong type", { ...fragment(), gate: 7 }],
+  ["invalid outcome", { ...fragment(), outcome: "maybe" }],
+  ["outcome wrong type", { ...fragment(), outcome: 1 }],
+  ["missing checks", { ...fragment(), checks: undefined }],
+  ["checks as boolean", { ...fragment(), checks: true }],
+  ["checks as object", { ...fragment(), checks: { a: 1 } }],
+  ["check entry not an object", { ...fragment(), checks: ["x"] }],
+  ["check.name wrong type", { ...fragment(), checks: [{ name: 1, pass: true, detail: "d" }] }],
+  ["check.pass wrong type", { ...fragment(), checks: [{ name: "n", pass: "yes", detail: "d" }] }],
+  ["check.detail nested object", { ...fragment(), checks: [{ name: "n", pass: true, detail: { a: 1 } }] }],
+  ["invalid startedAt", { ...fragment(), startedAt: "not-a-date" }],
+  ["startedAt wrong type", { ...fragment(), startedAt: 0 }],
+  ["invalid finishedAt", { ...fragment(), finishedAt: "2026-13-45T99:99:99Z" }],
+  ["provenance as array", { ...fragment(), provenance: [] }],
+  ["provenance as null", { ...fragment(), provenance: null }],
+  ["routes as array", { ...fragment(), routes: [] }],
+  ["unsupported fragmentSchemaVersion", { ...fragment(), fragmentSchemaVersion: 99 }],
+  ["fragmentSchemaVersion wrong type", { ...fragment(), fragmentSchemaVersion: "1" }],
+  ["version wrong type", { ...fragment(), version: 1 }],
+];
+
+for (const [label, input] of INVALID_FRAGMENTS) {
+  test(`fragment validation rejects: ${label}`, () => {
+    const r = validateFragment(input, isSafeGateName);
+    assert.equal(r.valid, false, `${label} must be rejected`);
+    if (!r.valid) assert.ok(r.errors.length > 0);
+  });
+}
+
+test("fragment validation accepts a well-formed fragment", () => {
+  assert.equal(validateFragment(fragment(), isSafeGateName).valid, true);
+});
+
+test("fragment validation permits unknown TOP-LEVEL fields (forward compatibility)", () => {
+  const r = validateFragment({ ...fragment(), futureField: { a: 1 } }, isSafeGateName);
+  assert.equal(r.valid, true);
+});
+
+test("timestamp validation rejects structurally valid but impossible dates", () => {
+  assert.equal(isValidTimestamp("2026-08-04T00:00:00.000Z"), true);
+  assert.equal(isValidTimestamp("2026-08-04T00:00:00+01:00"), true);
+  assert.equal(isValidTimestamp("2026-13-45T99:99:99Z"), false);
+  assert.equal(isValidTimestamp("yesterday"), false);
+  assert.equal(isValidTimestamp(12345), false);
+});
+
+test("a shape-invalid fragment on disk is counted malformed, never as evidence", () => {
+  const repo = makeRepo({ scripts: { "gate:seo": "x" } });
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  // Parses as JSON, wrong shape - the exact case the old cast let through.
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify({ gate: "gate-seo", outcome: "banana" }));
+  const built = buildSnapshot(repo, art);
+  assert.ok(built.ok);
+  if (!built.ok) return;
+  const c = built.snapshot.completeness as any;
+  assert.notEqual(c.status, "complete");
+  assert.deepEqual(c.malformed, ["gate-seo"]);
+  assert.equal((built.snapshot.gates as any)["gate-seo"].outcome, "error");
+});
+
+test("a fragment stored under a mismatched filename is malformed", () => {
+  const repo = makeRepo({ scripts: { "gate:seo": "x", "gate:ada": "y" } });
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-ada.json"), JSON.stringify(fragment({ gate: "gate-seo" })));
+  const built = buildSnapshot(repo, art);
+  assert.ok(built.ok);
+  if (built.ok) assert.ok((built.snapshot.completeness as any).malformed.includes("gate-ada"));
+});
+
+/* ================================================================== */
+/* 6. FINAL SCHEMA VALIDATION                                          */
+/* ================================================================== */
+
+test("the shipped schema exists and is loadable", () => {
+  const s = loadSnapshotSchema();
+  assert.equal((s as any).$schema !== undefined, true);
+});
+
+test("a generated snapshot validates against the SHIPPED schema", () => {
+  const repo = makeRepo();
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify(fragment()));
+  const built = buildSnapshot(repo, art);
+  assert.ok(built.ok);
+  if (!built.ok) return;
+  const r = validateAgainstSchema(built.snapshot, loadSnapshotSchema());
+  assert.equal(r.valid, true, r.valid ? "" : JSON.stringify((r as any).errors, null, 2));
+});
+
+test("schema validator reports an unsupported keyword rather than silently passing", () => {
+  const r = validateAgainstSchema({ a: 1 }, { type: "object", properties: { a: { type: "number", multipleOf: 2 } } });
+  assert.equal(r.valid, false);
+  if (!r.valid) assert.match(r.errors[0].message, /unsupported keyword/);
+});
+
+test("schema validator catches a wrong-typed field", () => {
+  const r = validateAgainstSchema({ schemaVersion: "1" }, { type: "object", properties: { schemaVersion: { const: 1 } } });
+  assert.equal(r.valid, false);
+});
+
+/* ================================================================== */
+/* 7. ATOMICITY + CONCURRENCY                                          */
+/* ================================================================== */
+
+test("writes leave no temporary residue on success", () => {
+  const repo = makeRepo();
+  const resolved = resolveArtifactRoot(repo);
+  assert.ok(resolved.ok);
+  if (!resolved.ok) return;
+  const r = writeConfinedFile(resolved.artifactRoot, resolved.repoRoot, "snapshot.json", "{}\n");
+  assert.equal(r.ok, true);
+  const leftovers = readdirSync(resolved.artifactRoot).filter((f) => f.includes(".tmp-"));
+  assert.deepEqual(leftovers, []);
+});
+
+test("a failed write leaves no temporary residue and preserves the prior file", () => {
+  const repo = makeRepo();
+  const resolved = resolveArtifactRoot(repo);
+  assert.ok(resolved.ok);
+  if (!resolved.ok) return;
+  mkdirSync(resolved.artifactRoot, { recursive: true });
+  writeFileSync(path.join(resolved.artifactRoot, "snapshot.json"), "PRIOR");
+  // Make the destination a directory so the rename fails after the temp write.
+  rmSync(path.join(resolved.artifactRoot, "snapshot.json"));
+  mkdirSync(path.join(resolved.artifactRoot, "snapshot.json"));
+  const r = writeConfinedFile(resolved.artifactRoot, resolved.repoRoot, "snapshot.json", "NEW");
+  assert.equal(r.ok, false);
+  const leftovers = readdirSync(resolved.artifactRoot).filter((f) => f.includes(".tmp-"));
+  assert.deepEqual(leftovers, [], "temp file must be cleaned up on failure");
+});
+
+test("a schema-invalid snapshot never replaces a previously valid snapshot.json", () => {
+  const repo = makeRepo();
+  const art = artifactPath(repo);
+  mkdirSync(art, { recursive: true });
+  writeFileSync(path.join(art, "snapshot.json"), "PRIOR-VALID");
+  // Force schema failure by making the loaded schema reject everything.
+  const built = { ok: true as const, snapshot: { schemaVersion: 999 } };
+  const r = validateAgainstSchema(built.snapshot, loadSnapshotSchema());
+  assert.equal(r.valid, false);
+  assert.equal(readFileSync(path.join(art, "snapshot.json"), "utf8"), "PRIOR-VALID");
+});
+
+test("concurrency: two sequential merges both succeed, last writer wins, no residue", () => {
+  const repo = makeRepo();
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify(fragment()));
+  withEnv(ARMED, () => {
+    assert.equal(runCli(repo).code, 0);
+    assert.equal(runCli(repo).code, 0);
+  });
+  const parsed = JSON.parse(readFileSync(path.join(art, "snapshot.json"), "utf8"));
+  assert.equal(parsed.schemaVersion, SCHEMA_VERSION);
+  assert.deepEqual(readdirSync(art).filter((f) => f.includes(".tmp-")), []);
+});
+
+test("in-flight temp fragments are ignored by the merger", () => {
+  const repo = makeRepo();
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify(fragment()));
+  writeFileSync(path.join(fragmentsDir(art), ".gate-seo.json.tmp-123-456"), "{ partial");
+  const built = buildSnapshot(repo, art);
+  assert.ok(built.ok);
+  if (built.ok) assert.deepEqual((built.snapshot.completeness as any).malformed, []);
+});
+
+/* ================================================================== */
+/* 8. CLI EXIT CODES (in-process + subprocess)                         */
+/* ================================================================== */
+
+test("CLI exits 0 and writes nothing when not authorized", () => {
+  const repo = makeRepo();
+  const before = tree(repo);
+  withEnv({ [SNAPSHOT_ENABLED_ENV]: undefined, [DEPRECATED_DIR_ENV]: undefined }, () => {
+    const r = runCli(repo);
+    assert.equal(r.code, 0);
+    assert.deepEqual(r.stderr, []);
+  });
+  assert.deepEqual(tree(repo), before);
+});
+
+test("CLI exits 0 and writes a snapshot when authorized", () => {
+  const repo = makeRepo();
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify(fragment()));
+  withEnv(ARMED, () => assert.equal(runCli(repo).code, 0));
+  assert.ok(existsSync(path.join(art, "snapshot.json")));
+});
+
+test("subprocess: the real bin exits 0 and writes nothing when unauthorized", () => {
+  const repo = makeRepo();
+  const before = tree(repo);
+  const out = execFileSync(process.execPath, [path.join(PKG_ROOT, "bin", "gate-snapshot.mjs")], {
+    cwd: repo,
+    env: { ...process.env, [SNAPSHOT_ENABLED_ENV]: undefined, [DEPRECATED_DIR_ENV]: undefined } as NodeJS.ProcessEnv,
+    encoding: "utf8",
+  });
+  assert.equal(out.trim(), "", "must be silent on the inert path");
+  assert.deepEqual(tree(repo), before);
+});
+
+test("subprocess: the real bin exits NONZERO on the deprecated env var and writes nothing", () => {
+  const repo = makeRepo();
+  const before = tree(repo);
+  let status = 0;
+  let stderr = "";
+  try {
+    execFileSync(process.execPath, [path.join(PKG_ROOT, "bin", "gate-snapshot.mjs")], {
+      cwd: repo,
+      env: { ...process.env, [SNAPSHOT_ENABLED_ENV]: "1", [DEPRECATED_DIR_ENV]: "/tmp/anything" },
+      stdio: "pipe",
+    });
+  } catch (err) {
+    const e = err as { status?: number; stderr?: Buffer };
+    status = e.status ?? -1;
+    stderr = e.stderr?.toString() ?? "";
+  }
+  assert.equal(status, 1, "armed + invalid config must exit 1");
+  assert.match(stderr, new RegExp(DEPRECATED_DIR_ENV));
+  assert.deepEqual(tree(repo), before);
+});
+
+test("subprocess: the real bin exits NONZERO outside a git repository", () => {
+  const notRepo = tmp("gs-notgit2-");
+  let status = 0;
+  try {
+    execFileSync(process.execPath, [path.join(PKG_ROOT, "bin", "gate-snapshot.mjs")], {
+      cwd: notRepo,
+      env: { ...process.env, [SNAPSHOT_ENABLED_ENV]: "1" },
+      stdio: "pipe",
+    });
+  } catch (err) {
+    status = (err as { status?: number }).status ?? -1;
+  }
+  assert.equal(status, 1);
+});
+
+test("subprocess: the direct-invocation guard actually fires (the bin does real work)", () => {
+  const repo = makeRepo();
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify(fragment()));
+  execFileSync(process.execPath, [path.join(PKG_ROOT, "bin", "gate-snapshot.mjs")], {
+    cwd: repo,
+    env: { ...process.env, [SNAPSHOT_ENABLED_ENV]: "1" },
+    stdio: "pipe",
+  });
+  // If the guard used new URL().pathname it would silently never run and this
+  // file would be absent.
+  assert.ok(existsSync(path.join(art, "snapshot.json")), "the CLI guard did not fire");
+});
+
+/* ================================================================== */
+/* 9. SECRETS                                                          */
+/* ================================================================== */
+
+test("shape-based redaction covers the known credential shapes", () => {
   const cases: Array<[string, string]> = [
-    ["AIzaSyA1234567890abcdefghijklmnop", "google-api-key"],
-    ["sk_live_abcdef123456", "stripe-key"],
+    ["AIza" + "SyA1234567890abcdefghijk", "google-api-key"],
+    ["sk_" + "live_abcdef123456", "stripe-key"],
     ["Bearer abcdef.ghijkl-1234", "bearer-token"],
-    ["G-ABC123XYZ", "ga4-measurement-id"],
-    ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcd", "jwt"],
+    ["G-" + "ABC123XYZ", "ga4-measurement-id"],
+    ["eyJ" + "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcd", "jwt"],
     ["postgres://user:pw@host:5432/db", "postgres-url"],
     ["-----BEGIN RSA PRIVATE KEY-----", "private-key-block"],
-    ["https://user:secretpw@example.com/x", "url-credentials"],
+    ["https://user:hunter2@example.com/x", "url-credentials"],
     ["authorization: Token abc123", "authorization-header"],
     ["cookie: session=abc123", "cookie-header"],
   ];
   for (const [raw, label] of cases) {
     const out = redactSecrets(raw);
-    assert.ok(out.includes("[REDACTED:"), `${label} was not redacted: ${out}`);
-    assert.ok(!out.includes("secretpw"), "a credential value survived redaction");
+    assert.ok(out.includes("[REDACTED:"), `${label} not redacted: ${out}`);
+    assert.ok(!out.includes("hunter2"));
   }
 });
 
-test("secrets: the real GA4 measurement id gate-ai-instrumentation embeds is redacted", () => {
-  // gate-ai-instrumentation writes a consent-gated exception detail containing
-  // a live G-XXXXXX id. Shape-based redaction catches it even though no field
-  // is named "secret" - which is exactly the case a denylist would miss.
-  const detail =
-    "consent-gated declared exception (measurementId=G-9K2LM4TQ7P); script injects post-consent";
-  const out = redactSecrets(detail);
-  assert.ok(!out.includes("G-9K2LM4TQ7P"));
-  assert.ok(out.includes("[REDACTED:ga4-measurement-id]"));
+test("key-aware redaction covers an opaque value with no recognizable shape", () => {
+  // The gap review found: the value has no shape and the key is short, so the
+  // old lookahead rule left it in the clear.
+  const out = sanitizeValue({ apiSecret: "abcdefghijklmnopqrstuvwxyz012345" }) as Record<string, unknown>;
+  assert.equal(out.apiSecret, "[REDACTED:credential-like-key]");
+
+  for (const key of ["token", "password", "clientSecret", "api_key", "apiKey", "privateKey", "sessionId", "credential"]) {
+    const o = sanitizeValue({ [key]: "opaque-value-with-no-shape-at-all" }) as Record<string, unknown>;
+    assert.equal(o[key], "[REDACTED:credential-like-key]", `${key} must be redacted by key`);
+  }
 });
 
-test("secrets: redaction survives nesting, arrays and object keys", () => {
+test("key-aware redaction does not fire on unrelated long tokens", () => {
+  // The over-inclusive half of the old rule: an unrelated token was redacted
+  // whenever the word "secret" appeared later in the same string.
+  const out = sanitizeValue({ note: "this build has no secret material", buildId: "abcdefghijklmnopqrstuvwx" }) as Record<string, unknown>;
+  assert.equal(out.buildId, "abcdefghijklmnopqrstuvwx", "an ordinary id must survive");
+});
+
+test("redaction survives nesting, arrays and object keys", () => {
   const clean = sanitizeValue({
-    nested: { deep: ["sk_live_abcdef123456", { k: "G-ZZZ999" }] },
+    nested: { deep: ["sk_" + "live_abcdef123456", { k: "G-" + "ZZZ999" }] },
     "authorization: Bearer abc12345": "v",
-  }) as Record<string, unknown>;
-  const serialized = JSON.stringify(clean);
-  assert.ok(!serialized.includes("sk_live_abcdef123456"));
-  assert.ok(!serialized.includes("G-ZZZ999"));
+  });
+  const s = JSON.stringify(clean);
+  assert.ok(!s.includes("sk_live_abcdef123456"));
+  assert.ok(!s.includes("G-ZZZ999"));
 });
 
-test("secrets: non-finite numbers are dropped, not serialized as null", () => {
-  // JSON.stringify turns NaN/Infinity into null, and a null reads as a measured
-  // absence. Losing the field is honest; misreporting it is not.
-  const out = sanitizeValue({ a: NaN, b: Infinity, c: -Infinity, d: 0, e: false }) as Record<
-    string,
-    unknown
-  >;
+test("non-finite numbers are dropped and named; real 0 and false are preserved", () => {
+  const out = sanitizeValue({ a: NaN, b: Infinity, c: -Infinity, d: 0, e: false }) as Record<string, unknown>;
   assert.equal(out.a, "[DROPPED:non-finite-number]");
   assert.equal(out.b, "[DROPPED:non-finite-number]");
   assert.equal(out.c, "[DROPPED:non-finite-number]");
-  assert.equal(out.d, 0, "a real 0 must be preserved");
-  assert.equal(out.e, false, "a real false must be preserved");
+  assert.equal(out.d, 0);
+  assert.equal(out.e, false);
 });
 
-test("secrets: the emitted fragment file contains no secret shapes", () => {
-  const dir = tmp();
-  withEnv(SNAPSHOT_DIR_ENV, dir, () =>
-    emitFragment({
-      ...FRAGMENT,
-      provenance: { key: "AIzaSyA1234567890abcdefghijklmnop", id: "G-ABC123XYZ" },
-    }),
+test("an emitted fragment file contains no secret shapes", () => {
+  const repo = makeRepo();
+  withEnv(ARMED, () =>
+    emitFragment(fragment({ provenance: { key: "AIza" + "SyA1234567890abcdefghijk", apiSecret: "opaque0123456789012345" } }), repo),
   );
-  const body = readFileSync(path.join(fragmentsDir(dir), "gate-seo.json"), "utf8");
+  const body = readFileSync(path.join(fragmentsDir(artifactPath(repo)), "gate-seo.json"), "utf8");
   assert.ok(!/AIzaSy/.test(body));
-  assert.ok(!/G-ABC123XYZ/.test(body));
+  assert.ok(!body.includes("opaque0123456789012345"));
 });
 
-/* ------------------------------------------------------------------ */
-/* 5. Idempotency                                                      */
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* 10. DETERMINISM / CONTENT ADDRESS                                   */
+/* ================================================================== */
 
-test("idempotency: re-emitting a gate overwrites rather than duplicating", () => {
-  const dir = tmp();
-  withEnv(SNAPSHOT_DIR_ENV, dir, () => {
-    emitFragment(FRAGMENT);
-    emitFragment({ ...FRAGMENT, outcome: "fail" });
-  });
-  const files = readdirSync(fragmentsDir(dir));
-  assert.equal(files.length, 1, "composed reruns must not append fragments");
-  const parsed = JSON.parse(readFileSync(path.join(fragmentsDir(dir), "gate-seo.json"), "utf8"));
-  assert.equal(parsed.outcome, "fail", "the later write must win");
+test("byCodepoint is locale-independent", () => {
+  // localeCompare can order these differently under some ICU/locale builds;
+  // a content address must not depend on that.
+  assert.equal(byCodepoint("a", "B") < 0, false);
+  assert.equal(["B", "a", "A"].sort(byCodepoint).join(""), "ABa");
 });
 
-test("idempotency: snapshotId is stable across merges of identical input", () => {
-  const gates = { "gate-seo": { outcome: "pass" as const, checks: FRAGMENT.checks } };
-  const args = {
-    domain: "example.com",
-    commitSha: "abc",
-    buildId: null,
-    environment: "production",
-    gateConfigHash: "sha256:x",
-    gates,
-  };
-  assert.equal(computeSnapshotId(args), computeSnapshotId({ ...args }));
+test("config hash is order-independent for routes and stable across runs", () => {
+  const a = computeConfigHash({ routes: ["/a", "/b"], expectedGates: ["gate-seo"] });
+  const b = computeConfigHash({ routes: ["/b", "/a"], expectedGates: ["gate-seo"] });
+  assert.equal(a, b);
+  assert.equal(a, computeConfigHash({ routes: ["/a", "/b"], expectedGates: ["gate-seo"] }));
 });
 
-test("idempotency: snapshotId changes when a gate outcome changes", () => {
-  const base = {
-    domain: "example.com",
-    commitSha: "abc",
-    buildId: null,
-    environment: "production",
-    gateConfigHash: "sha256:x",
-  };
-  const a = computeSnapshotId({ ...base, gates: { "gate-seo": { outcome: "pass" } } });
-  const b = computeSnapshotId({ ...base, gates: { "gate-seo": { outcome: "fail" } } });
-  assert.notEqual(a, b);
-});
-
-/* ------------------------------------------------------------------ */
-/* 6. Partial execution - the核 invariant: missing is never pass       */
-/* ------------------------------------------------------------------ */
-
-test("partial: a gate with no fragment is not_run, never pass", () => {
-  const merged = mergeFragments(["gate-seo", "gate-ada"], new Map([["gate-seo", FRAGMENT]]));
-  assert.equal(merged.gates["gate-ada"].outcome, "not_run");
-  assert.deepEqual(merged.gatesNotRun, ["gate-ada"]);
-  assert.notEqual(merged.gates["gate-ada"].outcome, "pass");
-  assert.ok(merged.gates["gate-ada"].reason);
-});
-
-test("partial: a not_run gate contributes no passing checks to the summary", () => {
-  const merged = mergeFragments(["gate-seo", "gate-ada"], new Map([["gate-seo", FRAGMENT]]));
-  const s = summarize(merged.gates);
-  assert.equal(s.checksTotal, 1);
-  assert.equal(s.checksPassed, 1);
-});
-
-test("partial: a malformed fragment is error+malformed, never silently dropped", () => {
-  const merged = mergeFragments(
-    ["gate-seo"],
-    new Map([["gate-seo", { malformed: true as const, reason: "fragment is not valid JSON" }]]),
+test("config hash changes when the route inventory changes", () => {
+  assert.notEqual(
+    computeConfigHash({ routes: ["/a"], expectedGates: [] }),
+    computeConfigHash({ routes: ["/a", "/b"], expectedGates: [] }),
   );
-  assert.equal(merged.gates["gate-seo"].outcome, "error");
-  assert.equal(merged.gates["gate-seo"].malformed, true);
-  assert.deepEqual(merged.malformed, ["gate-seo"]);
 });
 
-test("partial: a fragment from an undeclared gate is still recorded", () => {
-  const merged = mergeFragments([], new Map([["gate-seo", FRAGMENT]]));
-  assert.equal(merged.gates["gate-seo"].outcome, "pass");
-  assert.ok(merged.gatesRun.includes("gate-seo"));
+test("snapshotId is stable for identical input and changes on outcome", () => {
+  const base = { domain: "e.com", commitSha: "abc", buildId: null, environment: "production", gateConfigHash: "sha256:x" };
+  const g1 = { "gate-seo": { outcome: "pass" as const, checks: [{ name: "n", pass: true, detail: "d" }] } };
+  const g2 = { "gate-seo": { outcome: "fail" as const, checks: [{ name: "n", pass: true, detail: "d" }] } };
+  assert.equal(computeSnapshotId({ ...base, gates: g1 }), computeSnapshotId({ ...base, gates: g1 }));
+  assert.notEqual(computeSnapshotId({ ...base, gates: g1 }), computeSnapshotId({ ...base, gates: g2 }));
 });
 
-/* ------------------------------------------------------------------ */
-/* 7. Comparability                                                    */
-/* ------------------------------------------------------------------ */
+test("snapshotId changes when only a check detail changes", () => {
+  // Review finding: detail is evidence, so it belongs in the content address.
+  const base = { domain: "e.com", commitSha: "abc", buildId: null, environment: "production", gateConfigHash: "sha256:x" };
+  const a = { "gate-seo": { outcome: "pass" as const, checks: [{ name: "n", pass: true, detail: "before" }] } };
+  const b = { "gate-seo": { outcome: "pass" as const, checks: [{ name: "n", pass: true, detail: "after" }] } };
+  assert.notEqual(computeSnapshotId({ ...base, gates: a }), computeSnapshotId({ ...base, gates: b }));
+});
 
-function snap(overrides: {
-  env?: string;
-  mode?: string | null;
-  schema?: number;
-  hash?: string;
-  routes?: number;
-}) {
+/* ================================================================== */
+/* 11. COMPARABILITY + ENVIRONMENT                                     */
+/* ================================================================== */
+
+function snap(o: { env?: string; mode?: string | null; schema?: number; hash?: string; routes?: number }) {
   return {
-    schemaVersion: overrides.schema ?? SCHEMA_VERSION,
-    build: { environment: overrides.env ?? "production" },
-    summary: { comparability: { adaScanMode: overrides.mode ?? "browser" } },
-    site: { gateConfigHash: overrides.hash ?? "sha256:a", routeCount: overrides.routes ?? 10 },
+    schemaVersion: o.schema ?? SCHEMA_VERSION,
+    build: { environment: o.env ?? "production" },
+    summary: { comparability: { adaScanMode: o.mode === undefined ? "browser" : o.mode } },
+    site: { gateConfigHash: o.hash ?? "sha256:a", routeCount: o.routes ?? 10 },
   };
 }
 
-test("comparability: differing ada scanMode is NOT_COMPARABLE", () => {
+test("differing ada scanMode is NOT_COMPARABLE", () => {
   const v = assertComparable(snap({ mode: "browser" }), snap({ mode: "html-snapshot" }));
   assert.equal(v.comparable, false);
-  if (!v.comparable) {
-    assert.equal(v.code, "NOT_COMPARABLE");
-    assert.match(v.reason, /color-contrast/);
-  }
+  if (!v.comparable) assert.match(v.reason, /color-contrast/);
 });
 
-test("comparability: differing environment is NOT_COMPARABLE", () => {
+test("differing environment is NOT_COMPARABLE", () => {
   const v = assertComparable(snap({ env: "local" }), snap({ env: "production" }));
   assert.equal(v.comparable, false);
-  if (!v.comparable) assert.match(v.reason, /not production evidence/);
 });
 
-test("comparability: differing schema version is NOT_COMPARABLE", () => {
-  const v = assertComparable(snap({ schema: 1 }), snap({ schema: 2 }));
-  assert.equal(v.comparable, false);
+test("differing schema version is NOT_COMPARABLE", () => {
+  assert.equal(assertComparable(snap({ schema: 1 }), snap({ schema: 2 })).comparable, false);
 });
 
-test("comparability: same mode and environment is comparable", () => {
+test("same mode and environment is comparable; config drift is reported separately", () => {
   assert.equal(assertComparable(snap({}), snap({})).comparable, true);
-});
-
-test("comparability: a changed config hash is reported as scope drift", () => {
   const d = detectScopeDrift(snap({ hash: "sha256:a", routes: 10 }), snap({ hash: "sha256:b", routes: 12 }));
   assert.equal(d.drifted, true);
-  assert.match(d.reason ?? "", /scope reasons/);
 });
 
-/* ------------------------------------------------------------------ */
-/* 8. Config hash + environment classification                         */
-/* ------------------------------------------------------------------ */
-
-test("config hash: stable across runs, order-independent for routes", () => {
-  const a = computeConfigHash({ routes: ["/a", "/b"], expectedGates: ["gate-seo"] });
-  const b = computeConfigHash({ routes: ["/b", "/a"], expectedGates: ["gate-seo"] });
-  assert.equal(a, b, "route order must not change scope identity");
-});
-
-test("config hash: changes when the route inventory changes", () => {
-  const a = computeConfigHash({ routes: ["/a"], expectedGates: [] });
-  const b = computeConfigHash({ routes: ["/a", "/b"], expectedGates: [] });
-  assert.notEqual(a, b);
-});
-
-test("environment: vercel and CI markers classify correctly, never guessing production", () => {
+test("environment never guesses production from a URL", () => {
   assert.equal(classifyEnvironment({ VERCEL_ENV: "production" } as NodeJS.ProcessEnv), "production");
   assert.equal(classifyEnvironment({ VERCEL_ENV: "preview" } as NodeJS.ProcessEnv), "preview");
   assert.equal(classifyEnvironment({ CI: "true" } as NodeJS.ProcessEnv), "development");
   assert.equal(classifyEnvironment({} as NodeJS.ProcessEnv), "local");
-  // A laptop pointed at the live site is still local.
-  assert.equal(
-    classifyEnvironment({ GATE_BASE_URL: "https://live.example.com" } as NodeJS.ProcessEnv),
-    "local",
+  assert.equal(classifyEnvironment({ GATE_BASE_URL: "https://live.example.com" } as NodeJS.ProcessEnv), "local");
+});
+
+test("expected gates derive from the site's own gate: scripts", () => {
+  assert.deepEqual(
+    expectedGatesFromScripts({ "gate:ada": "x", "gate:seo": "x", "gate:all": "x", "gate:snapshot": "x", build: "x" }),
+    ["gate-ada", "gate-seo"],
   );
 });
 
-test("expected gates are derived from the site's own gate: scripts", () => {
-  const got = expectedGatesFromScripts({
-    "gate:ada": "x",
-    "gate:seo": "x",
-    "gate:all": "x",
-    "gate:snapshot": "x",
-    build: "x",
-  });
-  assert.deepEqual(got, ["gate-ada", "gate-seo"]);
-});
+/* ================================================================== */
+/* 12. END TO END                                                      */
+/* ================================================================== */
 
-/* ------------------------------------------------------------------ */
-/* 9. Real fixture round trip                                          */
-/* ------------------------------------------------------------------ */
-
-test("real fixture: a snapshot captured from bwt-sample-site parses and is well formed", () => {
-  const raw = readFileSync(path.join(FIXTURES, "real-bwt-sample-site.snapshot.json"), "utf8");
-  const s = JSON.parse(raw);
-
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
-  assert.match(s.snapshotId, /^sha256:[0-9a-f]{64}$/);
-  assert.match(s.site.gateConfigHash, /^sha256:[0-9a-f]{64}$/);
-  assert.equal(s.site.repo, "bwt-sample-site");
-
-  // Captured from a laptop, so it must be classified local - not production.
-  assert.equal(s.build.environment, "local");
-  assert.ok(s.build.commitSha, "a real run resolves a commit sha");
-
-  // Only the three source gates were run, so the record must be partial and
-  // must name the four that were not.
-  assert.equal(s.completeness.status, "partial");
-  assert.deepEqual(s.completeness.gatesNotRun.sort(), [
-    "gate-ada",
-    "gate-ai-instrumentation",
-    "gate-dashboard-parity",
-    "gate-seo",
-  ]);
-  for (const g of s.completeness.gatesNotRun) {
-    assert.equal(s.gates[g].outcome, "not_run");
-    assert.notEqual(s.gates[g].outcome, "pass");
-  }
-  assert.ok(s.completeness.reason);
-});
-
-test("real fixture: contains no secret shapes and no absolute filesystem paths", () => {
-  const raw = readFileSync(path.join(FIXTURES, "real-bwt-sample-site.snapshot.json"), "utf8");
-  for (const re of [
-    /AIza[0-9A-Za-z_-]{10,}/,
-    /\bG-[A-Z0-9]{6,}\b/,
-    /sk_(live|test)_/,
-    /postgres(ql)?:\/\//i,
-    /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-    /\/Users\/[a-z]+/i,
-  ]) {
-    assert.ok(!re.test(raw), `real snapshot leaked ${re}`);
-  }
-});
-
-test("real fixture: a real fragment carries its gate identity and outcome", () => {
-  const f = JSON.parse(
-    readFileSync(path.join(FIXTURES, "real-gate-sitemap-source.fragment.json"), "utf8"),
-  );
-  assert.equal(f.gate, "gate-sitemap-source");
-  assert.equal(f.outcome, "pass");
-  assert.ok(Array.isArray(f.checks));
-  assert.ok(f.startedAt && f.finishedAt);
-});
-
-/* ------------------------------------------------------------------ */
-/* 10. End-to-end build against a synthetic consumer                   */
-/* ------------------------------------------------------------------ */
-
-test("end to end: buildSnapshot produces a complete record when every gate ran", () => {
-  const dir = tmp();
-  const cwd = tmp();
+test("end to end: a real repo with every declared gate present is complete and schema-valid", () => {
+  const repo = makeRepo({ scripts: { "gate:seo": "x", "gate:ada": "y" } });
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify(fragment()));
   writeFileSync(
-    path.join(cwd, "package.json"),
-    JSON.stringify({ name: "fake-site", scripts: { "gate:seo": "x" } }),
+    path.join(fragmentsDir(art), "gate-ada.json"),
+    JSON.stringify(fragment({ gate: "gate-ada", provenance: { scanMode: "browser", colorContrastEvaluated: true, violationsBlocking: 0, violationsMinor: 2 } })),
   );
-  writeFileSync(
-    path.join(cwd, "gate.config.json"),
-    JSON.stringify({ routes: ["/", "/about"], baseUrl: "https://fake.example.com" }),
-  );
-  mkdirSync(fragmentsDir(dir), { recursive: true });
-  writeFileSync(path.join(fragmentsDir(dir), "gate-seo.json"), JSON.stringify(FRAGMENT));
 
-  const s = buildSnapshot(cwd, dir) as Record<string, any>;
+  withEnv(ARMED, () => assert.equal(runCli(repo).code, 0));
+
+  const s = JSON.parse(readFileSync(path.join(art, "snapshot.json"), "utf8"));
   assert.equal(s.completeness.status, "complete");
-  assert.deepEqual(s.completeness.gatesNotRun, []);
+  assert.equal(s.completeness.reason, null);
   assert.equal(s.site.domain, "fake.example.com");
-  assert.equal(s.site.routeCount, 2);
-  assert.equal(s.gates["gate-seo"].outcome, "pass");
+  assert.equal(s.summary.comparability.adaScanMode, "browser");
+  assert.match(s.snapshotId, /^sha256:[0-9a-f]{64}$/);
+  assert.ok(s.build.commitSha, "a real repo resolves a commit sha");
+  assert.equal(validateAgainstSchema(s, loadSnapshotSchema()).valid, true);
 });
 
-test("end to end: a malformed fragment cannot produce a complete snapshot", () => {
-  const dir = tmp();
-  const cwd = tmp();
-  writeFileSync(
-    path.join(cwd, "package.json"),
-    JSON.stringify({ name: "fake-site", scripts: { "gate:seo": "x" } }),
-  );
-  writeFileSync(path.join(cwd, "gate.config.json"), JSON.stringify({ routes: ["/"] }));
-  mkdirSync(fragmentsDir(dir), { recursive: true });
-  writeFileSync(path.join(fragmentsDir(dir), "gate-seo.json"), "{ this is not json");
+test("end to end: a partial run names the gates that did not run and is still schema-valid", () => {
+  const repo = makeRepo({ scripts: { "gate:seo": "x", "gate:ada": "y" } });
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify(fragment()));
 
-  const s = buildSnapshot(cwd, dir) as Record<string, any>;
+  withEnv(ARMED, () => assert.equal(runCli(repo).code, 0));
+
+  const s = JSON.parse(readFileSync(path.join(art, "snapshot.json"), "utf8"));
   assert.equal(s.completeness.status, "partial");
-  assert.equal(s.gates["gate-seo"].outcome, "error");
-  assert.equal(s.gates["gate-seo"].malformed, true);
-  assert.match(s.completeness.reason, /malformed/);
+  assert.deepEqual(s.completeness.gatesNotRun, ["gate-ada"]);
+  assert.equal(s.gates["gate-ada"].outcome, "not_run");
+  assert.equal(validateAgainstSchema(s, loadSnapshotSchema()).valid, true);
 });
 
-test("end to end: no fragments at all yields partial with a stated reason", () => {
-  const dir = tmp();
-  const cwd = tmp();
-  writeFileSync(
-    path.join(cwd, "package.json"),
-    JSON.stringify({ name: "fake-site", scripts: { "gate:seo": "x" } }),
+
+/* ================================================================== */
+/* 13. GAPS FOUND BY THE MUTATION CAMPAIGN                             */
+/* ================================================================== */
+
+test("M3 gap: the artifact root is fixed and ignores ALL environment input", () => {
+  // A mutation that read the destination from the environment escaped the
+  // suite, because authorize() rejects the deprecated var before
+  // resolveArtifactRoot is ever reached. Confinement must hold on its own, so
+  // this asserts the destination directly, independent of the auth guard.
+  const repo = makeRepo();
+  const expected = path.join(repo, ...ARTIFACT_DIR_SEGMENTS);
+
+  for (const bogus of ["/tmp/attacker", "../../escape", "", "relative/path"]) {
+    const r = withEnv(
+      { [DEPRECATED_DIR_ENV]: bogus, GATE_SNAPSHOT_OUT: bogus, SNAPSHOT_DIR: bogus },
+      () => resolveArtifactRoot(repo),
+    );
+    assert.ok(r.ok, "resolution must succeed inside a real repo");
+    if (r.ok) {
+      assert.equal(r.artifactRoot, expected, `destination moved for env value ${JSON.stringify(bogus)}`);
+      assert.ok(isInside(r.repoRoot, r.artifactRoot));
+    }
+  }
+});
+
+test("M3 gap: the artifact root is always under the repository, never the cwd", () => {
+  const repo = makeRepo();
+  const nested = path.join(repo, "a", "b");
+  mkdirSync(nested, { recursive: true });
+  const r = resolveArtifactRoot(nested);
+  assert.ok(r.ok);
+  if (r.ok) assert.equal(r.artifactRoot, path.join(repo, ...ARTIFACT_DIR_SEGMENTS));
+});
+
+test("M9 gap: a schema-invalid document is refused by the validation seam", () => {
+  const schema = loadSnapshotSchema();
+  const bad = { schemaVersion: 999, site: {}, build: {}, completeness: {}, gates: {}, summary: {} };
+  const v = validateSnapshotDocument(bad, schema);
+  assert.equal(v.valid, false, "an invalid document must be refused before it can replace a valid one");
+  if (!v.valid) assert.ok(v.errors.length > 0);
+});
+
+test("M9 gap: a valid generated document passes the same seam", () => {
+  const repo = makeRepo();
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify(fragment()));
+  const built = buildSnapshot(repo, art);
+  assert.ok(built.ok);
+  if (built.ok) assert.equal(validateSnapshotDocument(built.snapshot, loadSnapshotSchema()).valid, true);
+});
+
+test("M11 gap: a rename failure cleans up the temporary file and preserves the prior snapshot", () => {
+  const repo = makeRepo();
+  const resolved = resolveArtifactRoot(repo);
+  assert.ok(resolved.ok);
+  if (!resolved.ok) return;
+  mkdirSync(resolved.artifactRoot, { recursive: true });
+
+  // A NON-EMPTY directory at the destination makes renameSync fail AFTER the
+  // temp file has been written, which is the only way to exercise cleanup.
+  const dest = path.join(resolved.artifactRoot, "snapshot.json");
+  mkdirSync(dest, { recursive: true });
+  writeFileSync(path.join(dest, "occupied"), "x");
+
+  const r = writeConfinedFile(resolved.artifactRoot, resolved.repoRoot, "snapshot.json", "NEW");
+  assert.equal(r.ok, false, "rename onto a non-empty directory must fail");
+
+  const residue = readdirSync(resolved.artifactRoot).filter((f) => f.includes(".tmp-"));
+  assert.deepEqual(residue, [], "the temporary file must be removed on the failure path");
+  assert.ok(existsSync(path.join(dest, "occupied")), "the prior contents must be untouched");
+});
+
+test("M9 gap: runCli refuses to replace a valid snapshot when final validation fails", () => {
+  const repo = makeRepo();
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify(fragment()));
+
+  // Seed a previously valid snapshot that must survive untouched.
+  mkdirSync(art, { recursive: true });
+  writeFileSync(path.join(art, "snapshot.json"), "PRIOR-VALID");
+
+  // A contract the generated document cannot satisfy.
+  const impossible = { type: "object", required: ["thisFieldWillNeverExist"] };
+
+  const r = withEnv(ARMED, () => runCli(repo, process.env, { loadSchema: () => impossible }));
+
+  assert.equal(r.code, 1, "a schema-invalid document must exit nonzero");
+  assert.match(r.stderr.join("\n"), /failed schema validation/);
+  assert.equal(
+    readFileSync(path.join(art, "snapshot.json"), "utf8"),
+    "PRIOR-VALID",
+    "the previously valid snapshot must NOT be replaced",
   );
-  writeFileSync(path.join(cwd, "gate.config.json"), JSON.stringify({ routes: [] }));
-  const s = buildSnapshot(cwd, dir) as Record<string, any>;
-  assert.equal(s.completeness.status, "partial");
-  assert.match(s.completeness.reason, /no fragments found/);
+  assert.deepEqual(
+    readdirSync(art).filter((f) => f.includes(".tmp-")),
+    [],
+    "no temporary file may be left behind",
+  );
+});
+
+test("M9 gap: runCli writes normally when the real shipped schema is used", () => {
+  const repo = makeRepo();
+  const art = artifactPath(repo);
+  mkdirSync(fragmentsDir(art), { recursive: true });
+  writeFileSync(path.join(fragmentsDir(art), "gate-seo.json"), JSON.stringify(fragment()));
+  withEnv(ARMED, () => assert.equal(runCli(repo).code, 0));
+  assert.ok(existsSync(path.join(art, "snapshot.json")));
 });

@@ -4,53 +4,63 @@
  * WHY THIS EXISTS
  *
  * Every gate in this package measures a large number of technical facts per
- * build - HTTP status, canonical, meta robots, title, description, headings,
- * image alt, JSON-LD, sitemap membership, lastmod truthfulness, security
- * headers, axe violations - and then discards all of it at process exit. Only
- * the exit code survives.
+ * build and then discards all of it at process exit. Only the exit code
+ * survives, so no site accumulates a technical baseline. That is not a
+ * discipline failure; it is a missing write call. This module is that call.
  *
- * The consequence, observed across the Site Clinic fleet: no site accumulates
- * a technical baseline, so a "what did this look like before we changed it"
- * question can only be answered by whoever happened to capture it by hand.
- * Usually nobody did. That is not a discipline failure; it is a missing write
- * call. This module is that write call.
+ * SECURITY CONTRACT (rewritten after the PR #5 blocking review)
+ *
+ * The first implementation used one environment variable, GATE_SNAPSHOT_DIR,
+ * as BOTH the opt-in switch and the caller-chosen destination. Any non-blank
+ * value was treated as a directory, so an absolute path or a traversal wrote
+ * outside the repository - an arbitrary filesystem write reachable from a
+ * public CLI. Fixed by separating the two concerns:
+ *
+ *   AUTHORIZATION  GATE_SNAPSHOT_ENABLED=1   (exact string "1", nothing else)
+ *   DESTINATION    fixed, repository-relative, never caller-supplied:
+ *                  <git-toplevel>/.build-websites-tools/gate-snapshot/
+ *
+ * There is no path override. GATE_SNAPSHOT_DIR is now recognized only to be
+ * REJECTED: its presence is invalid deprecated configuration and its value is
+ * never interpreted as a path.
+ *
+ * Confinement is proven at the final mutation boundary, not merely in the CLI:
+ * the repository root is canonicalized with realpath, the destination is
+ * derived from it, and containment is checked with path.relative rather than a
+ * string prefix (which "/repo-evil" would defeat against "/repo"). Symlinked
+ * roots, symlinked parents and symlinked destinations are rejected.
  *
  * DESIGN: WHY A process.on("exit") RECORDER AND NOT A CALL AT EACH EXIT
  *
- * The gates terminate through many different paths - gate-ada alone calls
- * process.exit() from three places, gate-seo from two, and several gates set
- * process.exitCode and fall through. process.exit() does NOT run pending
- * `finally` blocks, so a finalizer placed in a try/finally would silently miss
- * the most interesting cases (the failures).
- *
- * Registering a single process.on("exit") handler fires on every one of those
- * paths, including uncaught throws that reach the top-level catch. It also
- * gives us the real exit code, so `outcome` is derived from what actually
- * happened rather than from a flag we remembered to set. The handler is
- * synchronous-only by Node's contract, which is why the write is writeFileSync.
- *
- * The cost of this choice is that a gate integrates with ONE line at the top of
- * main() plus data-recording calls, and cannot forget an exit path.
+ * Gates terminate through many paths - gate-ada alone calls process.exit() from
+ * three places, and several gates set process.exitCode and fall through. Since
+ * process.exit() does NOT run pending finally blocks, a finalizer in try/finally
+ * would miss exactly the failures worth recording. One process.on("exit")
+ * handler fires on all of them and reads the real exit code.
  *
  * HARD INVARIANTS (each has a test)
  *
- *  1. Inert unless GATE_SNAPSHOT_DIR is set. No env var -> no handler, no
- *     writes, no behavior change for the nine consumers already on a pinned tag.
- *  2. Emission can never fail a build. Every filesystem and serialization path
- *     is wrapped; failures warn to stderr and return. A lost measurement must
- *     never turn into a failed deployment.
- *  3. The gate's exit status is never modified. This module reads the exit
- *     code; it does not write it.
- *  4. No secret VALUES are ever serialized. Environment variables may be
- *     recorded by NAME only, and an explicit sanitizer strips anything that
- *     looks like a credential regardless of how it got into the payload.
- *  5. Fragment writes are idempotent per gate. gate-dashboard-parity composes
- *     other gates as subprocesses, so a composed run must overwrite rather than
- *     duplicate.
+ *  1. Inert unless GATE_SNAPSHOT_ENABLED is exactly "1".
+ *  2. Emission can never fail a build.
+ *  3. No write can land outside the fixed repository artifact directory.
+ *  4. No secret VALUES are serialized; redaction is key-aware AND shape-aware.
+ *  5. Fragment writes are idempotent per gate.
  */
 
-import { writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
+import {
+  writeFileSync,
+  mkdirSync,
+  renameSync,
+  unlinkSync,
+  realpathSync,
+  lstatSync,
+  existsSync,
+  openSync,
+  fsyncSync,
+  closeSync,
+} from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 
 export type CheckRecord = {
@@ -61,7 +71,10 @@ export type CheckRecord = {
 
 export type FragmentOutcome = "pass" | "fail" | "error";
 
+export const FRAGMENT_SCHEMA_VERSION = 1;
+
 export type Fragment = {
+  fragmentSchemaVersion?: number;
   gate: string;
   version: string;
   startedAt: string;
@@ -72,15 +85,14 @@ export type Fragment = {
   routes?: Record<string, unknown>;
 };
 
-/** Env var that arms the whole feature. Absent -> this module does nothing. */
-export const SNAPSHOT_DIR_ENV = "GATE_SNAPSHOT_DIR";
+/** Authorization. Exact value "1" and nothing else. */
+export const SNAPSHOT_ENABLED_ENV = "GATE_SNAPSHOT_ENABLED";
+/** Deprecated. Recognized only so its presence can be rejected. */
+export const DEPRECATED_DIR_ENV = "GATE_SNAPSHOT_DIR";
 
-/**
- * Gate names we will write a fragment for. A name outside this set is rejected
- * rather than normalized into some neighbouring path: the set is small, closed,
- * and known at author time, so an unknown name means a caller bug, not a new
- * gate we should silently accept into the filesystem.
- */
+/** Fixed, repository-relative artifact directory. Never caller-supplied. */
+export const ARTIFACT_DIR_SEGMENTS = [".build-websites-tools", "gate-snapshot"] as const;
+
 export const KNOWN_GATES = [
   "gate-ada",
   "gate-seo",
@@ -93,38 +105,283 @@ export const KNOWN_GATES = [
 
 export type KnownGate = (typeof KNOWN_GATES)[number];
 
-/**
- * Path-traversal guard. A gate name becomes a filename, so it must not be able
- * to escape the fragments directory. Belt and braces: allowlist membership AND
- * a character check, so adding a gate to KNOWN_GATES with a careless name still
- * cannot produce "../../etc/passwd".
- */
-export function isSafeGateName(gate: string): gate is KnownGate {
+export function isSafeGateName(gate: unknown): gate is KnownGate {
+  if (typeof gate !== "string") return false;
   if (!/^[a-z0-9-]+$/.test(gate)) return false;
   if (gate.includes("..") || gate.includes("/") || gate.includes("\\")) return false;
   return (KNOWN_GATES as readonly string[]).includes(gate);
 }
 
+/* ------------------------------------------------------------------ */
+/* Authorization                                                       */
+/* ------------------------------------------------------------------ */
+
+export type AuthDecision =
+  | { armed: true }
+  | { armed: false; reason: string; invalidConfig: boolean };
+
 /**
- * Values that must never reach a snapshot even by accident.
+ * Decide whether snapshot emission is authorized.
  *
- * Rationale for shape-based redaction rather than field-name denial: a caller
- * can invent a field name we did not anticipate, but a Google API secret, a
- * Stripe key, a bearer token and a GA4 measurement ID all have recognizable
- * SHAPES. Redacting on shape catches the case the author did not think of,
- * which is exactly the case that leaks.
+ * Exactly one accepted value: "1". "true", "yes", "on" and friends are
+ * deliberately NOT accepted - one documented value removes the whole "which
+ * spellings count" class, and a typo failing closed is safer than a typo
+ * arming a filesystem writer.
  *
- * GA4 measurement IDs (G-XXXX) are included deliberately. They are not strictly
- * secret, but they identify a customer's analytics property and there is no
- * reason a build snapshot needs one to prove configuration presence - the env
- * var NAME proves that.
+ * `invalidConfig` separates "not asked for" (inert, exit 0) from "asked for
+ * incorrectly" (the CLI must exit nonzero).
+ */
+export function authorize(env: NodeJS.ProcessEnv = process.env): AuthDecision {
+  if (Object.prototype.hasOwnProperty.call(env, DEPRECATED_DIR_ENV)) {
+    return {
+      armed: false,
+      invalidConfig: true,
+      reason: `${DEPRECATED_DIR_ENV} is no longer supported and its value is never interpreted as a path. Snapshots go to a fixed repository-relative directory. Unset it and set ${SNAPSHOT_ENABLED_ENV}=1.`,
+    };
+  }
+  const raw = env[SNAPSHOT_ENABLED_ENV];
+  if (raw === undefined) {
+    return { armed: false, invalidConfig: false, reason: "not enabled" };
+  }
+  if (raw === "1") return { armed: true };
+  return {
+    armed: false,
+    invalidConfig: false,
+    reason: `${SNAPSHOT_ENABLED_ENV} must be exactly "1" to enable snapshots; emission stays off`,
+  };
+}
+
+export function isArmed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return authorize(env).armed;
+}
+
+/* ------------------------------------------------------------------ */
+/* Repository resolution + confinement                                 */
+/* ------------------------------------------------------------------ */
+
+export type RootResolution =
+  | { ok: true; repoRoot: string; artifactRoot: string }
+  | { ok: false; reason: string };
+
+function gitToplevel(cwd: string): string | null {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      // Bounded: this runs inside a build step. git can stall on an index lock,
+      // a slow network filesystem, or a credential prompt, and a hang would
+      // stall the build - which this module promises never to do.
+      timeout: 5000,
+    });
+    const trimmed = out.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Containment proof.
+ *
+ * Uses path.relative, NOT a string prefix: "/repo-evil".startsWith("/repo") is
+ * true, so a prefix comparison is not a containment proof.
+ */
+export function isInside(root: string, target: string): boolean {
+  const rel = path.relative(root, target);
+  if (rel === "") return true;
+  if (rel === "..") return false;
+  return !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+}
+
+/** Canonicalize the nearest existing ancestor so symlinks cannot hide an escape. */
+export function canonicalizeNearestExisting(target: string): string {
+  let current = target;
+  const trailing: string[] = [];
+  for (let i = 0; i < 64; i += 1) {
+    if (existsSync(current)) {
+      let real: string;
+      try {
+        real = realpathSync(current);
+      } catch {
+        real = current;
+      }
+      return trailing.length > 0 ? path.join(real, ...trailing.reverse()) : real;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    trailing.push(path.basename(current));
+    current = parent;
+  }
+  return target;
+}
+
+/**
+ * Resolve the fixed artifact root from the canonical git top level.
+ *
+ * Fails closed when: not a git repository, git unavailable or slow, the
+ * toplevel cannot be canonicalized, or any component of the artifact path is a
+ * symlink that leaves the repository.
+ */
+export function resolveArtifactRoot(cwd: string = process.cwd()): RootResolution {
+  const top = gitToplevel(cwd);
+  if (!top) {
+    return {
+      ok: false,
+      reason:
+        "not inside a git repository (or git was unavailable): snapshots are written to a repository-relative directory, so there is nowhere safe to write",
+    };
+  }
+
+  let repoRoot: string;
+  try {
+    repoRoot = realpathSync(top);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `could not canonicalize repository root: ${(err as Error).message}`,
+    };
+  }
+
+  const artifactRoot = path.join(repoRoot, ...ARTIFACT_DIR_SEGMENTS);
+
+  // Reject a symlinked artifact root outright, even when it currently points
+  // inside: the target can be repointed between check and use.
+  if (existsSync(artifactRoot)) {
+    try {
+      if (lstatSync(artifactRoot).isSymbolicLink()) {
+        return { ok: false, reason: "artifact directory is a symlink; refusing to write" };
+      }
+    } catch {
+      /* fall through; the write boundary re-checks */
+    }
+  }
+
+  const canonical = canonicalizeNearestExisting(artifactRoot);
+  if (!isInside(repoRoot, canonical)) {
+    return {
+      ok: false,
+      reason: `artifact directory resolves outside the repository (${canonical}); refusing to write`,
+    };
+  }
+
+  return { ok: true, repoRoot, artifactRoot: canonical };
+}
+
+export function fragmentsDir(artifactRoot: string): string {
+  return path.join(artifactRoot, "fragments");
+}
+
+export type WriteResult = { ok: true; path: string } | { ok: false; reason: string };
+
+/**
+ * The single mutation boundary. Every write in this feature goes through here,
+ * so a lower-level writer cannot bypass confinement.
+ *
+ * The temp file is created in the SAME directory as the target, so the rename
+ * is a same-filesystem atomic replacement rather than a cross-device copy.
+ */
+export function writeConfinedFile(
+  artifactRoot: string,
+  repoRoot: string,
+  relativePath: string,
+  contents: string,
+): WriteResult {
+  if (path.isAbsolute(relativePath)) {
+    return { ok: false, reason: "absolute paths are never accepted" };
+  }
+  const target = path.join(artifactRoot, relativePath);
+  if (!isInside(artifactRoot, target) || !isInside(repoRoot, target)) {
+    return { ok: false, reason: `refusing to write outside the artifact directory: ${relativePath}` };
+  }
+
+  const dir = path.dirname(target);
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    return { ok: false, reason: `could not create artifact directory: ${(err as Error).message}` };
+  }
+
+  // Re-canonicalize AFTER mkdir: a symlink planted between resolution and
+  // creation is only visible once the directory exists.
+  let realDir: string;
+  try {
+    realDir = realpathSync(dir);
+  } catch (err) {
+    return { ok: false, reason: `could not canonicalize target directory: ${(err as Error).message}` };
+  }
+  if (!isInside(repoRoot, realDir)) {
+    return { ok: false, reason: `target directory escapes the repository after resolution: ${realDir}` };
+  }
+
+  const finalTarget = path.join(realDir, path.basename(target));
+  if (existsSync(finalTarget)) {
+    try {
+      const st = lstatSync(finalTarget);
+      if (st.isSymbolicLink()) {
+        return { ok: false, reason: "destination is a symlink; refusing to write" };
+      }
+      // A directory destination is deliberately NOT rejected here. Letting it
+      // reach renameSync means the failure path - and therefore the temporary
+      // file cleanup - is exercised by a real failure rather than short
+      // circuited. The symlink check above is the security-relevant one.
+    } catch {
+      /* fall through */
+    }
+  }
+
+  const tmp = path.join(
+    realDir,
+    `.${path.basename(finalTarget)}.tmp-${process.pid}-${Math.abs(Date.now())}`,
+  );
+  try {
+    writeFileSync(tmp, contents, { encoding: "utf8", mode: 0o644 });
+    try {
+      const fd = openSync(tmp, "r+");
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      /* fsync best-effort; the rename is still atomic within the filesystem */
+    }
+    renameSync(tmp, finalTarget);
+    return { ok: true, path: finalTarget };
+  } catch (err) {
+    try {
+      if (existsSync(tmp)) unlinkSync(tmp);
+    } catch {
+      /* best-effort cleanup */
+    }
+    return { ok: false, reason: (err as Error).message };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Redaction                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Value shapes that must never reach a snapshot.
+ *
+ * Shape-based because a caller can invent a field name we did not anticipate,
+ * but a Google API key, a Stripe key and a JWT have recognizable shapes. GA4
+ * measurement ids are included deliberately: not strictly secret, but they
+ * identify a customer's analytics property, and the env var NAME already proves
+ * configuration presence.
+ *
+ * The previous `ga4-api-secret` rule used a lookahead for the word "secret"
+ * elsewhere in the string. Review showed it was both under- and over-inclusive:
+ * `{ apiSecret: "<20 opaque chars>" }` was NOT redacted, while an unrelated long
+ * token WAS redacted whenever "secret" appeared later. It is replaced by the
+ * key-aware rule below.
  */
 const SECRET_SHAPES: Array<{ label: string; re: RegExp }> = [
   { label: "google-api-key", re: /\bAIza[0-9A-Za-z_-]{10,}/ },
   { label: "stripe-key", re: /\b[sprk]k_(live|test)_[0-9A-Za-z]{6,}/ },
   { label: "bearer-token", re: /\bBearer\s+[0-9A-Za-z._~+/-]{8,}/i },
   { label: "ga4-measurement-id", re: /\bG-[A-Z0-9]{6,}\b/ },
-  { label: "ga4-api-secret", re: /\b[0-9A-Za-z_-]{20,}\.{0,1}[0-9A-Za-z_-]*\b(?=.*secret)/i },
   { label: "jwt", re: /\beyJ[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{4,}/ },
   { label: "private-key-block", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
   { label: "url-credentials", re: /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i },
@@ -133,7 +390,18 @@ const SECRET_SHAPES: Array<{ label: string; re: RegExp }> = [
   { label: "cookie-header", re: /\bcookie\s*[:=]\s*\S+/i },
 ];
 
-/** Replace any secret-shaped substring with a labelled marker. */
+/**
+ * Property names whose VALUE is credential-like regardless of shape. This is
+ * the fix for the key-blind gap: a 20-character opaque string under `apiSecret`
+ * has no distinguishing shape, only a distinguishing key.
+ */
+const SECRET_KEY_PATTERN =
+  /(secret|token|password|passwd|credential|api[_-]?key|apikey|private[_-]?key|session[_-]?id|client[_-]?secret)/i;
+
+export function isSecretKey(key: string): boolean {
+  return SECRET_KEY_PATTERN.test(key);
+}
+
 export function redactSecrets(input: string): string {
   let out = input;
   for (const { label, re } of SECRET_SHAPES) {
@@ -144,16 +412,24 @@ export function redactSecrets(input: string): string {
 }
 
 /**
- * Recursively sanitize a value for serialization.
+ * Recursively sanitize a value.
  *
- * Beyond redaction this enforces JSON-safety, because a value that
- * JSON.stringify turns into `null` is worse than a dropped field: it looks like
- * a measured absence. Non-finite numbers (NaN, Infinity) serialize to null, so
- * they are dropped and named instead. Same reasoning as the conversion-relay
- * scalar guard: lose the parameter, never misreport it.
+ * `key` is threaded through so a credential-like property name redacts its
+ * value even when the value has no recognizable shape.
+ *
+ * Non-finite numbers are dropped and named rather than serialized: JSON
+ * .stringify turns NaN/Infinity into null, and a null reads as a measured
+ * absence. Losing the field is honest; misreporting it is not.
  */
-export function sanitizeValue(value: unknown, depth = 0): unknown {
+export function sanitizeValue(value: unknown, depth = 0, key?: string): unknown {
   if (depth > 12) return "[REDACTED:max-depth]";
+
+  if (key !== undefined && isSecretKey(key)) {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "boolean") return value; // a boolean carries no secret
+    return "[REDACTED:credential-like-key]";
+  }
+
   if (value === null) return null;
 
   const t = typeof value;
@@ -174,7 +450,7 @@ export function sanitizeValue(value: unknown, depth = 0): unknown {
     if (value instanceof Error) return redactSecrets(value.message);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const clean = sanitizeValue(v, depth + 1);
+      const clean = sanitizeValue(v, depth + 1, k);
       if (clean !== undefined) out[redactSecrets(k)] = clean;
     }
     return out;
@@ -182,9 +458,15 @@ export function sanitizeValue(value: unknown, depth = 0): unknown {
   return undefined;
 }
 
-/** Resolve this package's version without importing package.json as a module. */
-function toolsVersion(): string {
+/* ------------------------------------------------------------------ */
+/* Emission                                                            */
+/* ------------------------------------------------------------------ */
+
+export function toolsVersion(): string {
   try {
+    // createRequire, never new URL().pathname: pathname is percent-encoded and
+    // Windows-shaped, so a path containing a space or a drive letter silently
+    // resolves to the wrong file.
     const require = createRequire(import.meta.url);
     const pkg = require("../package.json") as { version?: string };
     return pkg.version ?? "unknown";
@@ -193,28 +475,18 @@ function toolsVersion(): string {
   }
 }
 
-export function snapshotDir(): string | null {
-  const dir = process.env[SNAPSHOT_DIR_ENV];
-  if (!dir || dir.trim().length === 0) return null;
-  return dir.trim();
-}
-
-export function fragmentsDir(root: string): string {
-  return path.join(root, "fragments");
-}
-
-/**
- * Write one fragment. Never throws, never alters exit status.
- *
- * The write is atomic-where-practical: serialize to a temp file in the same
- * directory, then rename. A crash mid-write therefore leaves either the old
- * fragment or the new one, never a truncated document the merger would have to
- * treat as malformed.
- */
-export function emitFragment(fragment: Fragment): void {
+/** Write one fragment. Never throws, never alters exit status. */
+export function emitFragment(fragment: Fragment, cwd: string = process.cwd()): void {
   try {
-    const root = snapshotDir();
-    if (!root) return; // inert without the env var - invariant 1
+    const auth = authorize();
+    if (!auth.armed) {
+      if (auth.invalidConfig) {
+        // Loud, but never fatal: a gate must not fail a build over a snapshot
+        // misconfiguration.
+        process.stderr.write(`gate-snapshot  ${auth.reason}\n`);
+      }
+      return;
+    }
 
     if (!isSafeGateName(fragment.gate)) {
       process.stderr.write(
@@ -223,29 +495,30 @@ export function emitFragment(fragment: Fragment): void {
       return;
     }
 
-    const dir = fragmentsDir(root);
-    mkdirSync(dir, { recursive: true });
+    const resolved = resolveArtifactRoot(cwd);
+    if (!resolved.ok) {
+      process.stderr.write(`gate-snapshot  ${resolved.reason}\n`);
+      return;
+    }
 
     const safe = sanitizeValue({
+      fragmentSchemaVersion: FRAGMENT_SCHEMA_VERSION,
       ...fragment,
       version: fragment.version || toolsVersion(),
     }) as Record<string, unknown>;
 
-    const target = path.join(dir, `${fragment.gate}.json`);
-    const tmp = `${target}.tmp-${process.pid}`;
-    writeFileSync(tmp, `${JSON.stringify(safe, null, 2)}\n`, "utf8");
-    try {
-      renameSync(tmp, target); // idempotent per gate - invariant 5
-    } catch (err) {
-      try {
-        unlinkSync(tmp);
-      } catch {
-        /* best effort */
-      }
-      throw err;
+    const result = writeConfinedFile(
+      resolved.artifactRoot,
+      resolved.repoRoot,
+      path.join("fragments", `${fragment.gate}.json`),
+      `${JSON.stringify(safe, null, 2)}\n`,
+    );
+    if (!result.ok) {
+      process.stderr.write(
+        `gate-snapshot  fragment emission failed (build unaffected): ${result.reason}\n`,
+      );
     }
   } catch (err) {
-    // invariant 2: warn, never throw, never touch the exit code
     process.stderr.write(
       `gate-snapshot  fragment emission failed (build unaffected): ${(err as Error).message}\n`,
     );
@@ -253,15 +526,10 @@ export function emitFragment(fragment: Fragment): void {
 }
 
 export type FragmentRecorder = {
-  /** Merge keys into the fragment's provenance. */
   provenance(patch: Record<string, unknown>): void;
-  /** Append one check result. */
   check(check: CheckRecord): void;
-  /** Append many check results. */
   checks(checks: CheckRecord[]): void;
-  /** Phase 2 hook - typed per-route facts. Unused in Phase 1. */
   route(routePath: string, facts: Record<string, unknown>): void;
-  /** True when emission is armed. Lets callers skip expensive collection. */
   readonly enabled: boolean;
 };
 
@@ -274,22 +542,13 @@ const NOOP_RECORDER: FragmentRecorder = {
 };
 
 /**
- * Begin recording a fragment for `gate`, and arrange for it to be written on
- * process exit regardless of which exit path is taken.
- *
- * Returns a no-op recorder when GATE_SNAPSHOT_DIR is unset, so callers need no
- * conditional and the disabled path costs one property read.
- *
- * `outcome` is derived from the real exit code at exit time:
- *   0        -> pass
- *   non-zero -> fail
- * A gate that threw reaches its top-level catch and exits non-zero, so it lands
- * in `fail`. Callers that can distinguish an internal error from a legitimate
- * gate failure may set provenance({ errored: true }); the merger surfaces that
- * as outcome "error".
+ * Begin recording a fragment for `gate`, written on process exit regardless of
+ * which exit path is taken. Callers that can distinguish an internal error from
+ * a measured failure set provenance({ errored: true }), which surfaces as
+ * outcome "error".
  */
-export function beginFragment(gate: string): FragmentRecorder {
-  if (!snapshotDir()) return NOOP_RECORDER;
+export function beginFragment(gate: string, cwd: string = process.cwd()): FragmentRecorder {
+  if (!isArmed()) return NOOP_RECORDER;
   if (!isSafeGateName(gate)) {
     process.stderr.write(
       `gate-snapshot  refusing to record unrecognized gate name ${JSON.stringify(gate)}\n`,
@@ -304,16 +563,20 @@ export function beginFragment(gate: string): FragmentRecorder {
 
   process.on("exit", (code) => {
     const errored = provenance.errored === true;
-    emitFragment({
-      gate,
-      version: toolsVersion(),
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      outcome: errored ? "error" : code === 0 ? "pass" : "fail",
-      provenance,
-      checks,
-      ...(Object.keys(routes).length > 0 ? { routes } : {}),
-    });
+    emitFragment(
+      {
+        fragmentSchemaVersion: FRAGMENT_SCHEMA_VERSION,
+        gate,
+        version: toolsVersion(),
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        outcome: errored ? "error" : code === 0 ? "pass" : "fail",
+        provenance,
+        checks,
+        ...(Object.keys(routes).length > 0 ? { routes } : {}),
+      },
+      cwd,
+    );
   });
 
   return {

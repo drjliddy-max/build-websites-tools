@@ -7,4 +7,4 @@ node_modules/
 graphify-out/
 
 # gate-snapshot output (build artifact, never committed)
-.gate-snapshots/
+.build-websites-tools/
