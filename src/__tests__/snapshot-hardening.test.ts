@@ -761,28 +761,45 @@ test("M16 gap: a structurally VALID but semantically invalid document is refused
 });
 
 test("M27 gap: toolsVersion resolves from a path CONTAINING SPACES", { timeout: 60_000 }, () => {
-  // A .pathname-based resolution percent-encodes the space and silently falls
-  // back to "unknown". Running from the package root (no spaces) cannot see
-  // that, which is how the mutation escaped. Copy the module into a spaced
-  // directory and resolve there.
-  const spaced = path.join(tmp("gh-spaced-"), "dir with spaces");
-  mkdirSync(path.join(spaced, "src"), { recursive: true });
-  writeFileSync(path.join(spaced, "package.json"), JSON.stringify({ name: "x", version: "9.9.9" }));
-  cpSync(path.join(PKG_ROOT, "src", "snapshot.ts"), path.join(spaced, "src", "snapshot.ts"));
+  /*
+   * A .pathname-based resolution percent-encodes a space and silently falls
+   * back to "unknown". Two details make this test actually able to see that:
+   *
+   *  - the probe lives INSIDE the package root, so tsx keeps its TypeScript
+   *    project context (a lone .ts in os.tmpdir() failed to transform at all
+   *    on hosted CI, which was a defect in the test, not the code);
+   *  - the probe is nested so that the RESOLVED target - `../package.json` -
+   *    is itself inside the spaced directory. Putting the space only in the
+   *    importing directory is not enough: the resolved manifest then sits one
+   *    level up, outside the space, and the encoding bug never triggers.
+   */
+  const spaced = path.join(PKG_ROOT, "tmp space probe");
+  const srcDir = path.join(spaced, "src");
+  mkdirSync(srcDir, { recursive: true });
+  try {
+    writeFileSync(path.join(spaced, "package.json"), JSON.stringify({ name: "probe", version: "9.9.9" }));
+    const copied = path.join(srcDir, "snapshot-probe.ts");
+    cpSync(path.join(PKG_ROOT, "src", "snapshot.ts"), copied);
 
-  const script = path.join(spaced, "probe.mjs");
-  writeFileSync(
-    script,
-    `import { toolsVersion } from ${JSON.stringify(path.join(spaced, "src", "snapshot.ts"))};
-     console.log(toolsVersion());`,
-  );
-  const out = execFileSync(process.execPath, ["--import", "tsx", script], {
-    cwd: PKG_ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 45_000,
-  }).trim().split("\n").pop();
+    const script = path.join(srcDir, "probe.mjs");
+    writeFileSync(
+      script,
+      `import { toolsVersion } from ${JSON.stringify(copied)};\nconsole.log(toolsVersion());`,
+    );
+    const out = execFileSync(process.execPath, ["--import", "tsx", script], {
+      cwd: PKG_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 45_000,
+    })
+      .trim()
+      .split("\n")
+      .pop();
 
-  assert.equal(out, "9.9.9", "the version must resolve through a path containing spaces");
-  assert.notEqual(out, "unknown");
+    assert.ok(spaced.includes(" "), "the probe path must actually contain a space");
+    assert.equal(out, "9.9.9", "the manifest must resolve through a path containing spaces");
+    assert.notEqual(out, "unknown");
+  } finally {
+    rmSync(spaced, { recursive: true, force: true });
+  }
 });

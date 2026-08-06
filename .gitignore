@@ -8,3 +8,6 @@ graphify-out/
 
 # gate-snapshot output (build artifact, never committed)
 .build-websites-tools/
+
+# transient probe directory used by the spaced-path test
+tmp space probe/
