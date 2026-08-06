@@ -22,6 +22,7 @@ import {
   resolveMeasurementId,
   sanitizeParams,
 } from "../conversion-relay.js";
+import type { MeasurementIdResolution } from "../conversion-relay.js";
 
 const SERVER_KEY = "GA4_MEASUREMENT_ID";
 const PUBLIC_KEY = "NEXT_PUBLIC_GA_MEASUREMENT_ID";
@@ -29,6 +30,36 @@ const DEFAULT_KEYS = [SERVER_KEY, PUBLIC_KEY];
 
 // Assembled, never a literal, so the pre-commit credential guard stays quiet.
 const STUB_SECRET = ["stub", "value", "never", "sent"].join("-");
+
+/**
+ * COMPILE-TIME guard on the declared result union. This has no runtime assertion
+ * on purpose - it exists so `tsc --noEmit` fails if `MALFORMED` is ever dropped
+ * from `MeasurementIdResolution`.
+ *
+ * WHY: the runtime suite cannot see the `.d.ts`. Mutation testing proved it -
+ * deleting the MALFORMED variant from the declaration left all 293 runtime tests
+ * green and typecheck at exit 0, so a consumer switching exhaustively on the
+ * union would have lost its malformed branch with nothing reporting it. Removing
+ * a variant now makes the `case "MALFORMED"` below un-comparable and fails the
+ * build; adding a variant makes `exhaustive` stop being `never` and also fails.
+ */
+function _assertResolutionUnionIsExhaustive(r: MeasurementIdResolution): string {
+  switch (r.status) {
+    case "VALID":
+      return r.measurementId;
+    case "MISSING":
+      return r.keys.join(",");
+    case "MALFORMED":
+      return r.malformedKeys.join(",");
+    case "CONFLICT":
+      return r.conflictingKeys.join(",");
+    default: {
+      const exhaustive: never = r;
+      return exhaustive;
+    }
+  }
+}
+void _assertResolutionUnionIsExhaustive;
 
 function makeRequest(body: unknown) {
   return new Request("https://example.test/api/track", {
