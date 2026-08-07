@@ -34,6 +34,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { beginFragment } from "./snapshot";
 
 export type CheckResult = {
   name: string;
@@ -313,7 +314,33 @@ async function main(): Promise<void> {
   const config = loadSitemapConfig(cwd);
   const enforce = config.enforce !== false;
 
+  const fragment = beginFragment("gate-sitemap-source");
   const { files, violations } = evaluateSitemapSource({ cwd });
+
+  // enforce=false makes this gate report-only, so it exits 0 while violations
+  // exist. Recording `enforce` keeps a downstream reader from mistaking a
+  // non-blocking pass for a clean sitemap source.
+  fragment.provenance({
+    enforce,
+    sitemapSourceFiles: files,
+    violationCount: violations.length,
+    violations: violations.map((v) => ({
+      file: v.file,
+      line: v.line,
+      code: v.code,
+    })),
+  });
+  fragment.checks(
+    files.length === 0
+      ? [{ name: "sitemap-source", pass: true, detail: "no dynamic sitemap source found (static sitemap.xml validated at runtime by gate:seo)" }]
+      : violations.length === 0
+        ? [{ name: "sitemap-source", pass: true, detail: `${files.length} source(s) declare content dates` }]
+        : violations.map((v) => ({
+            name: `sitemap-source ${v.file}:${v.line}`,
+            pass: false,
+            detail: v.code,
+          })),
+  );
 
   if (files.length === 0) {
     // A site may serve a fully static public/sitemap.xml, which has no

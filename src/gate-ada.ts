@@ -20,6 +20,7 @@ import { JSDOM } from "jsdom";
 import { chromium, type Browser, type Page } from "playwright";
 import { ensureBaseUrlReady } from "./ensure-base-url";
 import { loadGateConfig } from "./load-config";
+import { beginFragment } from "./snapshot";
 
 type Impact = "critical" | "serious" | "moderate" | "minor";
 const BLOCKING_IMPACTS: Impact[] = ["critical", "serious", "moderate"];
@@ -95,14 +96,35 @@ async function analyzeWithSnapshot(url: string): Promise<AxeResults> {
 async function main() {
   const config = loadGateConfig();
   const { routes, baseUrl } = config;
+  const snapshot = beginFragment("gate-ada");
   const stopServer = await ensureBaseUrlReady(config);
 
   try {
     const browserSession = await createBrowserSession();
     const scanMode = browserSession ? "browser" : "html-snapshot";
 
+    /*
+     * scanMode is the single most important provenance field in the whole
+     * snapshot system. html-snapshot mode cannot evaluate color-contrast
+     * (JSDOM has no canvas-backed layout), so a build that fell back to it
+     * legitimately reports FEWER violations than a browser-mode build of the
+     * identical site. Comparing across modes would read that measurement loss
+     * as an accessibility improvement. Recording the mode is what lets the
+     * merger and every downstream consumer refuse that comparison.
+     */
+    snapshot.provenance({
+      scanMode,
+      colorContrastEvaluated: scanMode === "browser",
+      axeVersion: axe.version ?? null,
+      axeTags: [...AXE_TAGS],
+      blockingImpacts: [...BLOCKING_IMPACTS],
+      baseUrl,
+      routeCount: routes.length,
+    });
+
     let totalBlocking = 0;
     const perRouteResults: Array<{ route: string; blocking: number; minor: number }> = [];
+    const snapshotViolations: Array<Record<string, unknown>> = [];
 
     console.log(`gate:ada  mode ${scanMode}`);
     if (scanMode === "html-snapshot") {
@@ -128,6 +150,31 @@ async function main() {
         perRouteResults.push({ route, blocking: blocking.length, minor });
         totalBlocking += blocking.length;
 
+        /*
+         * Record rule identity and counts only. Deliberately NOT captured:
+         * node.target selectors and node.html. Selectors on a real site embed
+         * customer content (ids derived from names, addresses, form field
+         * values), and the snapshot is an artifact that may be shipped to a
+         * dashboard. Rule id + impact + node count is enough to trend a
+         * violation and to reproduce it locally; the snippet is not.
+         */
+        snapshotViolations.push(
+          ...results.violations.map((v) => ({
+            route,
+            id: v.id,
+            impact: v.impact ?? "minor",
+            help: v.help,
+            helpUrl: v.helpUrl,
+            nodeCount: v.nodes.length,
+            blocking: BLOCKING_IMPACTS.includes((v.impact as Impact) || "minor"),
+          })),
+        );
+        snapshot.check({
+          name: `ada ${route}`,
+          pass: blocking.length === 0,
+          detail: `${blocking.length} blocking, ${minor} minor`,
+        });
+
         if (blocking.length > 0) {
           console.log(` ✗ ${blocking.length} blocking, ${minor} minor`);
           for (const v of blocking) {
@@ -149,6 +196,15 @@ async function main() {
       } catch (err) {
         console.error(`\n  ✗ failed to load ${url}: ${(err as Error).message}`);
         console.error("    is the dev server running at this URL?");
+        // A route that could not be loaded is a gate ERROR, not a measured
+        // failure: we learned nothing about the page. Distinguishing the two
+        // stops the merger from recording an unreachable site as "0 violations".
+        snapshot.provenance({ errored: true, erroredRoute: route });
+        snapshot.check({
+          name: `ada ${route}`,
+          pass: false,
+          detail: `failed to load: ${(err as Error).message}`,
+        });
         if (browserSession) {
           await browserSession.browser.close();
         }
@@ -165,6 +221,13 @@ async function main() {
     for (const r of perRouteResults) {
       console.log(`  ${r.route}: ${r.blocking} blocking, ${r.minor} minor`);
     }
+
+    snapshot.provenance({
+      routesScanned: perRouteResults.length,
+      violationsBlocking: totalBlocking,
+      violationsMinor: perRouteResults.reduce((n, r) => n + r.minor, 0),
+      violations: snapshotViolations,
+    });
 
     // When the gate falls back to html-snapshot mode (Vercel and other
     // cloud builders without Chromium), the axe color-contrast rule is
