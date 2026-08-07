@@ -777,7 +777,14 @@ test("M27 gap: toolsVersion resolves from a path CONTAINING SPACES", { timeout: 
   const srcDir = path.join(spaced, "src");
   mkdirSync(srcDir, { recursive: true });
   try {
-    writeFileSync(path.join(spaced, "package.json"), JSON.stringify({ name: "probe", version: "9.9.9" }));
+    // "type": "module" mirrors this package's own manifest. Without it the
+    // nearest package.json makes Node infer CommonJS for the copied .ts, and
+    // the named export disappears - which is how this passed on Node 20 and
+    // failed on Node 22 in hosted CI.
+    writeFileSync(
+      path.join(spaced, "package.json"),
+      JSON.stringify({ name: "probe", version: "9.9.9", type: "module" }),
+    );
     const copied = path.join(srcDir, "snapshot-probe.ts");
     cpSync(path.join(PKG_ROOT, "src", "snapshot.ts"), copied);
 
