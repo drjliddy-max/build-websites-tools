@@ -227,6 +227,37 @@ export function isSupportedGa4MeasurementId(value) {
   return typeof value === "string" && GA4_MEASUREMENT_ID_PATTERN.test(value);
 }
 
+/** Fixed reason category for a malformed measurement id. Never derived from input. */
+export const MALFORMED_MEASUREMENT_ID_REASON = "malformed_identifier";
+
+/**
+ * Build the ONLY public diagnostic for a malformed measurement id.
+ *
+ * STRUCTURAL PROTECTION, not a convention: this function takes KEY NAMES and
+ * nothing else. There is no parameter for the offending value, its length, a
+ * prefix, a normalized form, or a hash - so a caller cannot interpolate one even
+ * by accident, and a reviewer can confirm that by reading the signature.
+ *
+ * WHY: a mutation that leaked `(got not-..., length 12)` into the refusal
+ * survived the entire v0.12.1 mutation campaign. Asserting only that the FULL
+ * value is absent does not prove a prefix, suffix, or length is absent. Partial
+ * disclosure of a configured identifier is still disclosure.
+ *
+ * Allowed content: the fixed reason, the expected FORM, and which configuration
+ * KEYS were rejected. Nothing derived from the supplied value.
+ */
+export function malformedMeasurementIdDiagnostic(malformedKeys) {
+  const keys = Array.isArray(malformedKeys) ? malformedKeys.join(" and ") : "";
+  return {
+    code: "GA4_CONFIG_MALFORMED",
+    reason: MALFORMED_MEASUREMENT_ID_REASON,
+    error:
+      `Unsupported GA4 measurement id in ${keys}. Expected the form G-XXXXXXXXXX. ` +
+      `Refusing to dispatch - GA4 accepts an unrecognised id with 204 and stores nothing, ` +
+      `so this would look like success. No event was sent.`,
+  };
+}
+
 /**
  * Resolve the ONE effective measurement id from the declared env keys.
  *
@@ -245,11 +276,13 @@ export function isSupportedGa4MeasurementId(value) {
  * attributable, and fixable in one env edit; choosing silently is none of those.
  *
  * Returns one of:
- *   { status: "VALID",    measurementId, sourceKeys, duplicate }
- *   { status: "MISSING",  keys }
- *   { status: "CONFLICT", conflictingKeys, keys }
+ *   { status: "VALID",     measurementId, sourceKeys, duplicate }
+ *   { status: "MISSING",   keys }
+ *   { status: "MALFORMED", malformedKeys, keys }
+ *   { status: "CONFLICT",  conflictingKeys, keys }
  *
- * CONFLICT deliberately carries NO values, so a caller cannot leak a
+ * CONFLICT and MALFORMED deliberately carry NO values - not the value, not a
+ * prefix, suffix, length, hash, or normalized form - so a caller cannot leak a
  * measurement id into an error string by accident. Empty and whitespace-only
  * values are treated as absent; surrounding whitespace is trimmed and nothing
  * else about the identifier is rewritten.
@@ -430,16 +463,9 @@ export function createTrackHandler(options) {
     // 204 for an id it does not recognise and stores nothing, so without this
     // check a typo produces an indistinguishable-from-success 200 forever.
     if (resolution.status === "MALFORMED") {
-      return jsonResponse(
-        {
-          code: "GA4_CONFIG_MALFORMED",
-          error:
-            `Unsupported GA4 measurement id in ${resolution.malformedKeys.join(" and ")}. ` +
-            `Expected the form G-XXXXXXXXXX. Refusing to dispatch - GA4 accepts an unrecognised id with 204 ` +
-            `and stores nothing, so this would look like success. No event was sent.`,
-        },
-        503,
-      );
+      // Single safe constructor. Do not inline a message here - see the note on
+      // malformedMeasurementIdDiagnostic for why the value cannot be a parameter.
+      return jsonResponse(malformedMeasurementIdDiagnostic(resolution.malformedKeys), 503);
     }
 
     if (resolution.status === "MISSING" || !apiSecret) {

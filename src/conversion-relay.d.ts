@@ -58,6 +58,20 @@ export type MeasurementIdResolution =
  * so accepting a typo is silent and permanent while refusing is loud and fixed
  * by one env edit.
  */
+/** Fixed reason category for a malformed measurement id. Never derived from input. */
+export declare const MALFORMED_MEASUREMENT_ID_REASON: "malformed_identifier";
+
+/**
+ * Build the ONLY public diagnostic for a malformed measurement id.
+ * Takes KEY NAMES and nothing else - there is deliberately no parameter for the
+ * offending value, so a caller cannot interpolate one. See the .js for why.
+ */
+export declare function malformedMeasurementIdDiagnostic(malformedKeys: string[]): {
+  code: "GA4_CONFIG_MALFORMED";
+  reason: typeof MALFORMED_MEASUREMENT_ID_REASON;
+  error: string;
+};
+
 export declare function isSupportedGa4MeasurementId(value: unknown): boolean;
 
 /**
