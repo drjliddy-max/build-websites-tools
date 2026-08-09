@@ -1,6 +1,6 @@
 {
   "name": "build-websites-tools",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "type": "module",
   "exports": {
     "./related-content": {
@@ -18,6 +18,9 @@
     "./sitemap": {
       "types": "./src/sitemap.d.ts",
       "default": "./src/sitemap.js"
+    },
+    "./blog-writer": {
+      "default": "./src/blog-writer/index.js"
     }
   },
   "description": "Build-time enforcement gates for production websites: WCAG 2.1 AA accessibility, Google indexing rules, and the MASTER_VISIBILITY_MATRIX AI Instrumentation Contract. One package, every site, no drift.",
@@ -62,7 +65,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/__tests__/*.test.ts"
+    "test": "node --import tsx --test src/__tests__/*.test.ts src/blog-writer/__tests__/*.test.mjs"
   },
   "dependencies": {
     "@axe-core/playwright": "^4.10.0",
