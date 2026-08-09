@@ -22,7 +22,7 @@ import {
 } from "./cadence.js";
 import { DISALLOWED_IMAGE_PATHS } from "./registry.js";
 import { resolveTopic, TopicSupplyError } from "./topicSupply.js";
-import { generateArticle } from "./generator.js";
+import { generateArticle, generateWithProviderRouting } from "./generator.js";
 import { acquireImage } from "./imageProvider.js";
 import {
   assertTransition,
@@ -175,23 +175,33 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
     // BEFORE it can reach the queue, which is the qirofit failure mode. It is the same
     // function that gates admission below, so a repair loop cannot drift from
     // the rule it is repairing against.
-    const article = await generateArticle({
+    // A consumer may supply an ordered `providers` route or a single
+    // `provider`. Routing is the general case: `provider` is the one-element
+    // route, so there is a single code path rather than two that can drift.
+    const providers = deps.providers ?? (deps.provider ? [deps.provider] : []);
+    if (providers.length === 0) {
+      throw new PipelineError("generate", "No generation provider configured.");
+    }
+    const generationArgs = {
       site,
       keyword: topic.keyword,
       supportingKeywords: topic.supporting ?? [],
       occurrence,
       history,
-      provider: deps.provider,
       constraints: CONSTRAINTS,
       validate: (candidate) => validateArticle({ article: candidate, site, history }),
       maxAttempts: deps.maxGenerationAttempts ?? 3,
-    });
+    };
+    const article = providers.length === 1
+      ? await generateArticle({ ...generationArgs, provider: providers[0] })
+      : await generateWithProviderRouting({ ...generationArgs, providers });
     state = assertTransition(state, "GENERATED");
     record("generate", true, {
       title: article.title,
-      provider: deps.provider.id,
-      model: deps.provider.model,
+      provider: article.generation.providerId,
+      model: article.generation.model,
       attempts: article.generation.attempts,
+      route: article.generation.route ?? null,
     });
 
     // ── 8. validate independently, after generation ──────────────────────
@@ -242,8 +252,8 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
         provenance: {
           classification: "NEW_CANONICAL",
           generatedBy: "canonical-pipeline",
-          generationProvider: deps.provider.id,
-          generationModel: deps.provider.model,
+          generationProvider: article.generation.providerId,
+          generationModel: article.generation.model,
           topicProvenance: topic.provenance,
           imageProvider: acquired.image?.provider ?? null,
           note: "dry-run: generated, validated and image-acquired; nothing committed or published",
@@ -306,8 +316,8 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
       provenance: {
         classification: "NEW_CANONICAL",
         generatedBy: "canonical-pipeline",
-        generationProvider: deps.provider.id,
-        generationModel: deps.provider.model,
+        generationProvider: article.generation.providerId,
+        generationModel: article.generation.model,
         topicProvenance: topic.provenance,
         imageProvider: acquired.image.provider,
       },
