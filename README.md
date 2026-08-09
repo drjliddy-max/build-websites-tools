@@ -8,7 +8,7 @@
 
 ## The Site Clinic Standard
 
-These five gates define an open, checkable standard for a production-ready site: it meets **WCAG 2.1 AA**, it follows **Google's indexing rules**, and it satisfies the **AI Instrumentation Contract** (machine-discoverable by AI crawlers). The standard *is* the gate set: if your build passes `gate:all`, your site meets it.
+The gate set defines an open, checkable standard for a production-ready site: it meets **WCAG 2.1 AA**, it follows **Google's indexing rules**, and it satisfies the **AI Instrumentation Contract** (machine-discoverable by AI crawlers). The standard *is* the gate set: if your build passes `gate:all`, your site meets it.
 
 The standard is **open and free** under Apache-2.0. Adopt it, run it in your own CI, and display the badge. You do **not** need a Site Clinic subscription to meet the standard or use the gates: the gates are the standard, and they are yours.
 
@@ -20,9 +20,43 @@ You finished the site. The Lighthouse score looks fine. The build passes. But a 
 
 **The core issue:** accessibility, indexing, and AI-discoverability rules are easy to author once and impossible to keep current by hand. Sites drift the moment they ship. There's no enforcement between "I added the canonical tag" and "the canonical tag survives every PR."
 
-## The six gates
+## The gate set
 
-`build-websites-tools` ships six enforcement gates that run at `prebuild`. A failing gate fails the build. A failing build does not deploy.
+`build-websites-tools` ships **seven** gate executables that run at `prebuild`. A failing gate fails the build. A failing build does not deploy.
+
+Six are leaf gates. The seventh, `gate-dashboard-parity`, is a **meta-gate**: it spawns four of the leaves and aggregates them. That is why a consuming site's `gate:all` contains only three commands while running all seven gates - the single most common misreading of this package.
+
+<!-- GATE-INVENTORY:START -->
+<!-- Machine-checked against package.json "bin" by src/__tests__/docs-contract.test.ts.
+     Adding a gate executable without adding a row here fails the build. -->
+
+| Gate | Invocation | Composed by |
+|---|---|---|
+| `gate-ada` | leaf | `gate-dashboard-parity` |
+| `gate-seo` | leaf | `gate-dashboard-parity` |
+| `gate-ai-instrumentation-source` | leaf | `gate-dashboard-parity` |
+| `gate-conversion-instrumentation-source` | leaf | `gate-dashboard-parity` |
+| `gate-ai-instrumentation` | leaf | - (runtime probe; needs a live server, so it is never composed) |
+| `gate-sitemap-source` | leaf | - |
+| `gate-dashboard-parity` | **meta** | - (composes the four above) |
+
+<!-- GATE-INVENTORY:END -->
+
+The resulting execution, from a consumer's three-command `gate:all`:
+
+```
+npm run gate:all
+├── gate:sitemap-source              direct
+├── gate:dashboard-parity            META
+│   ├── gate:ada
+│   ├── gate:seo
+│   ├── gate:ai-instrumentation-source
+│   └── gate:conversion-instrumentation-source
+└── gate:ai-instrumentation          direct (runtime probe)
+                                     = 7 gates
+```
+
+What each one enforces:
 
 1. **`gate-ada`**: WCAG 2.1 AA via axe-core. Every route in `gate.config.json` is loaded in a real browser (or jsdom on cloud hosts without Chromium); the build fails on any critical, serious, or moderate violation.
 2. **`gate-seo`**: Google indexing rules at build time. HTTP 200, no `<meta robots noindex>`, no `X-Robots-Tag: noindex`, canonical matches request path, sitemap and routes are consistent (parsed as structured XML records, including `lastmod`), truthful sitemap `lastmod` dates, valid `robots.txt`, full structural meta (title, description, OpenGraph, Twitter card, h1, heading hierarchy, image alt), JSON-LD presence, internal-link canonicality. Blocks the exact failure modes Search Console flags as "Excluded by noindex," "Page with redirect," and "Discovered, currently not indexed."
@@ -31,11 +65,11 @@ You finished the site. The Lighthouse score looks fine. The build passes. But a 
 5. **`gate-conversion-instrumentation-source`**: static check (no running server needed) that the site ships a consent-independent conversion-event relay so a found visitor's action can actually be measured. Enforces four invariants: exactly one `/api/track` route; the route forwards server-side via `GA4_API_SECRET` (not consent-gated client gtag); **single delivery** - client code calls the relay and no caller *also* fires a client `gtag("event", ...)` for the same click; and **session params** - the relay sends `session_id` and `engagement_time_msec`; and **delivery-safe payload** - the relay does NOT send `user_ip_address` or forward a `User-Agent` header, which cause GA4 to accept an event with a `204` and silently store nothing. Implements the Conversion Instrumentation Contract (MASTER_VISIBILITY_MATRIX §17.3.1.2, 2026-06-17), **corrected in v0.10.0** (see Migration below). Add it to a site's `gate:all` once that site has wired its conversion relay; which events a site emits is enforced downstream by Site Monitor, not here.
 6. **`gate-sitemap-source`** (v0.9.0): static check that the site's sitemap declares truthful `lastmod` dates. Prohibits `new Date()` with no argument, `Date.now()`, and one build-scoped date variable stamped onto every route. Explicitly allows reading stored content metadata (`new Date(post.published)`) and literal content dates. Companion to the runtime `lastmod` validation now in `gate-seo`: this one catches the construct, that one catches the served result.
 
-Together: Google sees what it expects. Screen readers and assistive tech work. LLMs find the per-bot rules and the canonical baseline. Required pages (`/`, `/privacy`, `/terms`, `/accessibility`, `/contact`) cannot ship missing. The same five gates run on every Site Clinic-built site.
+Together: Google sees what it expects. Screen readers and assistive tech work. LLMs find the per-bot rules and the canonical baseline. Required pages (`/`, `/privacy`, `/terms`, `/accessibility`, `/contact`) cannot ship missing. The same gate set runs on every Site Clinic-built site.
 
 ## Dashboard-readiness meta-gate
 
-**`gate-dashboard-parity`** (v0.6.0) is a site-side meta-gate that *composes* the five readiness gates above - it runs `gate:ada`, `gate:seo`, `gate:ai-instrumentation-source`, and `gate:conversion-instrumentation-source` and fails the build, naming the gap, if a marketing site is missing any surface a Site Clinic dashboard reads. It does not duplicate their logic; it orchestrates them so a marketing site cannot ship sub-parity. This is the **site side** of board parity (MASTER_VISIBILITY_MATRIX §17.3.1.2); the **board side** is enforced by Site Monitor's `billableClientParity` contract test. Phase 3 Option A (site-side composition); the shared-manifest Option B is deferred. Details: [`docs/GATE_DASHBOARD_PARITY.md`](docs/GATE_DASHBOARD_PARITY.md).
+**`gate-dashboard-parity`** (v0.6.0) is a site-side meta-gate that *composes* four of the readiness gates above - it runs `gate:ada`, `gate:seo`, `gate:ai-instrumentation-source`, and `gate:conversion-instrumentation-source` and fails the build, naming the gap, if a marketing site is missing any surface a Site Clinic dashboard reads. The runtime probe `gate:ai-instrumentation` is deliberately **not** composed: it needs a live server, so consumers invoke it directly from `gate:all`. It does not duplicate their logic; it orchestrates them so a marketing site cannot ship sub-parity. This is the **site side** of board parity (MASTER_VISIBILITY_MATRIX §17.3.1.2); the **board side** is enforced by Site Monitor's `billableClientParity` contract test. Phase 3 Option A (site-side composition); the shared-manifest Option B is deferred. Details: [`docs/GATE_DASHBOARD_PARITY.md`](docs/GATE_DASHBOARD_PARITY.md).
 
 ## Used by
 
@@ -47,15 +81,62 @@ Together: Google sees what it expects. Screen readers and assistive tech work. L
 - [daily-rise.com](https://daily-rise.com)
 - [jeffrystein.com](https://jeffrystein.com)
 
-Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) (the from-scratch public sample, gates re-verified weekly in [public CI](https://github.com/drjliddy-max/bwt-sample-site/actions/workflows/gates.yml)) and a second client engagement not yet named here. Every build on the Site Clinic stack consumes the same five gates from a tagged release pin (`gate-conversion-instrumentation-source` is wired per-site once a site has its conversion relay). No site opts out of the core four.
+Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) (the from-scratch public sample, gates re-verified weekly in [public CI](https://github.com/drjliddy-max/bwt-sample-site/actions/workflows/gates.yml)) and a second client engagement not yet named here. Every build on the Site Clinic stack consumes the same gate set from a tagged release pin. Opt-outs exist but are explicit and reasoned in the site's own `gate.config.json`: `bwt-sample-site`, for example, skips the conversion gate because it ships no funnel. A silent opt-out is a defect; a recorded one is a decision.
 
 ## Install
 
+<!-- RELEASE-PIN:START -->
+<!-- The pins below are machine-checked against package.json "version" by
+     src/__tests__/docs-contract.test.ts. Bumping the version without updating
+     them fails the build. Version history elsewhere in this file is exempt. -->
+
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.11.1"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.12.1"
 ```
 
-Pin to a tag for reproducible builds. Replace `#v0.11.1` with the version you want; `npm outdated` will tell you when a newer tag exists.
+```jsonc
+// package.json
+"devDependencies": {
+  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.12.1"
+}
+```
+
+<!-- RELEASE-PIN:END -->
+
+### Which version to pin
+
+| You are | Pin | Why |
+|---|---|---|
+| A new consumer | `v0.12.1` | Latest stable published tag. The fail-closed GA4 contract is included from the start, so there is nothing to migrate. |
+| An existing consumer on `v0.11.x` | `v0.12.1`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. |
+| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.12.1` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
+| A consumer with no `/api/track` relay | any | The GA4 contract does not apply to you. `bwt-sample-site` is deliberately on `v0.9.0` for this reason. |
+
+### Release semantics: how a pin actually takes effect
+
+Consumers install from an **immutable GitHub tag**, never a local path:
+
+```
+github:drjliddy-max/build-websites-tools#vX.Y.Z
+```
+
+A consumer's behaviour changes **only** when its pin is advanced *and* reinstalled so the resolved SHA in its lockfile moves. Editing a local sibling checkout of this repo changes nothing for any consumer: there is no `file:../build-websites-tools` link anywhere in the portfolio, and re-creating one would reintroduce the vendored-drift class this package exists to remove.
+
+Verify what a consumer is really running:
+
+```bash
+node -e "const l=require('./package-lock.json');
+  const k=Object.keys(l.packages).find(k=>k.endsWith('node_modules/build-websites-tools'));
+  console.log(l.packages[k].resolved)"
+```
+
+### Breaking behaviour introduced in v0.12.x
+
+**v0.12.0: ambiguous GA4 measurement-id configuration now refuses instead of silently choosing.** If two declared keys hold *differing* values, the relay returns `503` naming the **keys, never the values**, and dispatches nothing. Identical values are fine. Until v0.11.3 the first populated key won, so a stale `GA4_MEASUREMENT_ID` could silently outrank the correct public id and send every conversion to the wrong property, with the relay reporting success.
+
+**Historical delivery success does not prove you have no conflict.** Under v0.11.3 a conflict was resolved silently, so a working site is fully consistent with a latent conflict. Before bumping, check for the **presence** of both keys in production (not their values); if both are present and differ, fix the configuration first. Reverting to v0.11.3 is *not* the correct response to a 503 naming two keys: it restores the silent selection the release exists to end.
+
+**v0.12.1: the refusal message now states the real accepted form** (`"G-"` followed by 6-20 uppercase letters or digits) instead of implying a fixed 10-character id, and the diagnostic is constructed so it cannot include the rejected value. No configuration change is required.
 
 ## Wire it into your site
 
@@ -63,22 +144,25 @@ Two files. That's the whole consumption surface.
 
 ### 1. `package.json` scripts
 
+The dependency pin is in [Install](#install) above. Register every gate you use as a script, then compose `gate:all` through the meta-gate:
+
 ```json
 {
-  "devDependencies": {
-    "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.11.1"
-  },
   "scripts": {
     "gate:ada": "gate-ada",
     "gate:seo": "gate-seo",
     "gate:ai-instrumentation-source": "gate-ai-instrumentation-source",
     "gate:conversion-instrumentation-source": "gate-conversion-instrumentation-source",
     "gate:ai-instrumentation": "gate-ai-instrumentation",
-    "gate:all": "npm run gate:ada && npm run gate:seo && npm run gate:ai-instrumentation-source && npm run gate:conversion-instrumentation-source && npm run gate:ai-instrumentation",
+    "gate:sitemap-source": "gate-sitemap-source",
+    "gate:dashboard-parity": "gate-dashboard-parity",
+    "gate:all": "npm run gate:sitemap-source && npm run gate:dashboard-parity && npm run gate:ai-instrumentation",
     "prebuild": "npm run gate:all"
   }
 }
 ```
+
+**`gate:all` is three commands and runs seven gates.** `gate:dashboard-parity` spawns `gate:ada`, `gate:seo`, `gate:ai-instrumentation-source` and `gate:conversion-instrumentation-source`, so listing those four in `gate:all` as well would run each of them twice. They still need their own script entries, because the meta-gate invokes them by name. This is the shape every consumer in the portfolio uses.
 
 ### 2. `gate.config.json`
 
@@ -268,7 +352,9 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 ## Status
 
-`v0.11.3`. Six gates shipped (`gate-ada`, `gate-seo`, `gate-ai-instrumentation`, `gate-ai-instrumentation-source`, `gate-conversion-instrumentation-source`, `gate-sitemap-source`), tagged for pin-by-version consumption. Active on every site in the **Used by** list above.
+`v0.12.1`. Seven gate executables shipped: the six leaves plus the `gate-dashboard-parity` meta-gate. The canonical list is the machine-checked table in [The gate set](#the-gate-set). Tagged for pin-by-version consumption, and active on every site in the **Used by** list above.
+
+Portfolio adoption is deliberately **not** uniform, and that is not drift: `bwt-sample-site` is pinned to `v0.9.0` because it ships no conversion relay, and consumers advance only when a release changes something they exercise. What matters is that every pin is intentional and recorded, not that every pin is equal.
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
