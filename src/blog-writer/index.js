@@ -11,4 +11,5 @@ export * from "./validators.js";
 export * from "./generator.js";
 export * from "./imageProvider.js";
 export * from "./proof.js";
+export * from "./publisher.js";
 export { runBlogWriterPipeline, PIPELINE_VERSION, PipelineError } from "./pipeline.js";
