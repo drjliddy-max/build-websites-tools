@@ -12,7 +12,8 @@
  *
  * Providers are injected. `local` drives the operator's Ollama instance and
  * needs no hosted credential, which is what makes this provable today; `hosted`
- * is the same interface against an API. Site registrations never name a model, * provider choice is a pipeline-level decision, not site configuration.
+ * is the same interface against an API. Site registrations never name a model:
+ * provider choice is a pipeline-level decision, not site configuration.
  *
  * FAIL CLOSED
  *
@@ -201,6 +202,10 @@ export function createHostedProvider({ model, endpoint, apiKeyEnv, fetchImpl = f
   return {
     id: "hosted",
     model,
+    /** Routing skips an unavailable provider rather than failing the run. */
+    isAvailable() {
+      return Boolean(process.env[apiKeyEnv]?.trim());
+    },
     async complete(prompt, { timeoutMs = 300_000 } = {}) {
       const apiKey = process.env[apiKeyEnv]?.trim();
       if (!apiKey) {
@@ -241,6 +246,55 @@ export function createHostedProvider({ model, endpoint, apiKeyEnv, fetchImpl = f
  * does NOT validate. The caller runs `validateArticle` so that generation can
  * never mark its own work acceptable.
  */
+/**
+ * Route generation across an ordered provider list.
+ *
+ * `liddy` exhausted its retries on two local models without ever producing a
+ * body that met the length and structure rules. The answer is a stronger
+ * provider, not a weaker validator: the constraints describe what a publishable
+ * article is, and lowering them to fit a 12B model would publish worse articles
+ * on all seven sites.
+ *
+ * Each provider gets the full repair budget before the next is tried. A
+ * provider that cannot run at all (missing credential) is skipped and recorded,
+ * so an absent hosted key degrades the route rather than failing the run.
+ */
+export async function generateWithProviderRouting({ providers, ...args }) {
+  if (!Array.isArray(providers) || providers.length === 0) {
+    throw new GenerationError("Provider routing needs at least one provider.");
+  }
+  const route = [];
+  let lastError = null;
+
+  for (const provider of providers) {
+    if (typeof provider.isAvailable === "function" && !provider.isAvailable()) {
+      route.push({ providerId: provider.id, model: provider.model, outcome: "unavailable" });
+      continue;
+    }
+    try {
+      const article = await generateArticle({ ...args, provider });
+      return {
+        ...article,
+        generation: { ...article.generation, route: [...route, { providerId: provider.id, model: provider.model, outcome: "accepted" }] },
+      };
+    } catch (error) {
+      lastError = error;
+      route.push({
+        providerId: provider.id,
+        model: provider.model,
+        outcome: "rejected",
+        reason: error.message,
+      });
+    }
+  }
+
+  throw new GenerationError(
+    `All ${providers.length} provider(s) failed to produce a valid article. ` +
+      `Route: ${route.map((r) => `${r.providerId}:${r.outcome}`).join(" -> ")}`,
+    { route, lastError: lastError?.message ?? null },
+  );
+}
+
 export async function generateArticle({
   site,
   keyword,

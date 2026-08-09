@@ -103,6 +103,7 @@ export function buildProof({
       generatedBy: provenance.generatedBy ?? null,
       generationProvider: provenance.generationProvider ?? null,
       generationModel: provenance.generationModel ?? null,
+      topicProvenance: provenance.topicProvenance ?? null,
       imageProvider: provenance.imageProvider ?? null,
       note: provenance.note ?? null,
     },

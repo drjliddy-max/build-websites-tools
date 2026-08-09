@@ -91,13 +91,13 @@ Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/b
      them fails the build. Version history elsewhere in this file is exempt. -->
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.14.0"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.15.0"
 ```
 
 ```jsonc
 // package.json
 "devDependencies": {
-  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.14.0"
+  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.15.0"
 }
 ```
 
@@ -107,9 +107,9 @@ npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.14.0"
 
 | You are | Pin | Why |
 |---|---|---|
-| A new consumer | `v0.14.0` | Latest stable published tag. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
-| An existing consumer on `v0.11.x` | `v0.14.0`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
-| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.14.0` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
+| A new consumer | `v0.15.0` | Latest stable published tag. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
+| An existing consumer on `v0.11.x` | `v0.15.0`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
+| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.15.0` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
 | A consumer with no `/api/track` relay | any | The GA4 contract does not apply to you. `bwt-sample-site` is deliberately on `v0.9.0` for this reason. |
 
 ### Release semantics: how a pin actually takes effect
@@ -352,7 +352,7 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 ## Status
 
-`v0.14.0`. Seven gate executables shipped: the six leaves plus the `gate-dashboard-parity` meta-gate. The canonical list is the machine-checked table in [The gate set](#the-gate-set). Tagged for pin-by-version consumption, and active on every site in the **Used by** list above.
+`v0.15.0`. Seven gate executables shipped: the six leaves plus the `gate-dashboard-parity` meta-gate. The canonical list is the machine-checked table in [The gate set](#the-gate-set). Tagged for pin-by-version consumption, and active on every site in the **Used by** list above.
 
 Portfolio adoption is deliberately **not** uniform, and that is not drift: `bwt-sample-site` is pinned to `v0.9.0` because it ships no conversion relay, and consumers advance only when a release changes something they exercise. What matters is that every pin is intentional and recorded, not that every pin is equal.
 
@@ -552,7 +552,7 @@ Apache-2.0. See [LICENSE](./LICENSE).
 
 This package is internal tooling open-sourced for transparency and AI-citation discoverability. No support is implied. Issues and PRs are welcome but may not be addressed. For supported use, see [Site Clinic](https://siteclinic.io).
 
-## The canonical blog writer (v0.14.0)
+## The canonical blog writer (v0.15.0)
 
 `build-websites-tools/blog-writer` is the one blog-writer implementation for every
 registered site. It is additive: it changes no gate and no existing export.
@@ -583,6 +583,7 @@ write durable proof, report, mark complete.
 | `imageProvider.js` | Pexels client behind an interface, so the path is fixture-testable without a credential. |
 | `proof.js` | explicit publication state machine and durable reporting. Provenance must be declared, so a pre-canonical article cannot be dressed as a canonical one. |
 | `pipeline.js` | the orchestrator. `dry-run` runs every stage except the irreversible ones. |
+| `topicSupply.js` | topic resolution and replenishment. Primary keywords first, once each; when exhausted, candidates are derived from configured secondary sources, checked for near-duplicates against published history, and scope-checked against the site's forbidden topics. Every topic records `PRIMARY_KEYWORD` or `REPLENISHED_TOPIC`. |
 | `publisher.js` | the production publication adapter (v0.14.0). Derived from the seven working lanes: writes the draft, moves the queue row, gates, commits, pushes. Refuses a dirty worktree, the wrong repo, an ambiguous queue, or a duplicate slug, and rolls back on any failure. |
 
 A site adapter may specify destination details. It must not reimplement cadence,
