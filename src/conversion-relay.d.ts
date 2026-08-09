@@ -42,8 +42,43 @@ export type MeasurementIdResolution =
       duplicate: boolean;
     }
   | { status: "MISSING"; keys: string[] }
+  /** One or more configured sources hold a value this relay cannot dispatch to.
+   *  Carries key NAMES only - never values, substrings, or lengths. */
+  | { status: "MALFORMED"; malformedKeys: string[]; keys: string[] }
   /** Carries key NAMES only - never values - so an error cannot leak an id. */
   | { status: "CONFLICT"; conflictingKeys: string[]; keys: string[] };
+
+/**
+ * True when `value` matches the supported GA4 Measurement ID shape
+ * (`G-` + 6..20 uppercase alphanumerics).
+ *
+ * An application-level supported-format contract, not a claim about Google's
+ * present or future identifier shapes. Malformed values are REFUSED, never
+ * repaired: GA4 answers 204 for an id it does not recognise and stores nothing,
+ * so accepting a typo is silent and permanent while refusing is loud and fixed
+ * by one env edit.
+ */
+/** Fixed reason category for a malformed measurement id. Never derived from input. */
+export declare const MALFORMED_MEASUREMENT_ID_REASON: "malformed_identifier";
+
+/**
+ * Human description of the accepted measurement-id form, derived from the same
+ * bounds the validator enforces so the sentence cannot drift from the contract.
+ */
+export declare const GA4_MEASUREMENT_ID_EXPECTED_FORM: string;
+
+/**
+ * Build the ONLY public diagnostic for a malformed measurement id.
+ * Takes KEY NAMES and nothing else - there is deliberately no parameter for the
+ * offending value, so a caller cannot interpolate one. See the .js for why.
+ */
+export declare function malformedMeasurementIdDiagnostic(malformedKeys: string[]): {
+  code: "GA4_CONFIG_MALFORMED";
+  reason: typeof MALFORMED_MEASUREMENT_ID_REASON;
+  error: string;
+};
+
+export declare function isSupportedGa4MeasurementId(value: unknown): boolean;
 
 /**
  * Resolve exactly one effective measurement id, or refuse.

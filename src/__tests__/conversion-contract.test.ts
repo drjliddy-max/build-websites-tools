@@ -17,10 +17,15 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  malformedMeasurementIdDiagnostic,
+  MALFORMED_MEASUREMENT_ID_REASON,
+  GA4_MEASUREMENT_ID_EXPECTED_FORM,
   createTrackHandler,
+  isSupportedGa4MeasurementId,
   resolveMeasurementId,
   sanitizeParams,
 } from "../conversion-relay.js";
+import type { MeasurementIdResolution } from "../conversion-relay.js";
 
 const SERVER_KEY = "GA4_MEASUREMENT_ID";
 const PUBLIC_KEY = "NEXT_PUBLIC_GA_MEASUREMENT_ID";
@@ -28,6 +33,36 @@ const DEFAULT_KEYS = [SERVER_KEY, PUBLIC_KEY];
 
 // Assembled, never a literal, so the pre-commit credential guard stays quiet.
 const STUB_SECRET = ["stub", "value", "never", "sent"].join("-");
+
+/**
+ * COMPILE-TIME guard on the declared result union. This has no runtime assertion
+ * on purpose - it exists so `tsc --noEmit` fails if `MALFORMED` is ever dropped
+ * from `MeasurementIdResolution`.
+ *
+ * WHY: the runtime suite cannot see the `.d.ts`. Mutation testing proved it -
+ * deleting the MALFORMED variant from the declaration left all 293 runtime tests
+ * green and typecheck at exit 0, so a consumer switching exhaustively on the
+ * union would have lost its malformed branch with nothing reporting it. Removing
+ * a variant now makes the `case "MALFORMED"` below un-comparable and fails the
+ * build; adding a variant makes `exhaustive` stop being `never` and also fails.
+ */
+function _assertResolutionUnionIsExhaustive(r: MeasurementIdResolution): string {
+  switch (r.status) {
+    case "VALID":
+      return r.measurementId;
+    case "MISSING":
+      return r.keys.join(",");
+    case "MALFORMED":
+      return r.malformedKeys.join(",");
+    case "CONFLICT":
+      return r.conflictingKeys.join(",");
+    default: {
+      const exhaustive: never = r;
+      return exhaustive;
+    }
+  }
+}
+void _assertResolutionUnionIsExhaustive;
 
 function makeRequest(body: unknown) {
   return new Request("https://example.test/api/track", {
@@ -393,5 +428,413 @@ describe("C6 navigation contract - shape the builder can truthfully assert", () 
     );
     assert.equal(resolved, false, "must not block on the response");
     assert.ok(Date.now() - started < 40);
+  });
+});
+
+// ─── C1b: malformed measurement ids fail closed ────────────────────────
+//
+// The v0.12.0 contract refused AMBIGUOUS configuration but accepted any
+// nonempty string as an id, so `gibberish`, `UA-12345-6` and bare `G-` all
+// dispatched and returned 200. GA4 answers 204 for an id it does not recognise
+// and stores nothing, so that is the same silent-success signature the whole
+// contract exists to remove. Found by independent adversarial review of the
+// bmj-marketing rollout and reproduced against that consumer's real route.
+
+describe("C1b isSupportedGa4MeasurementId - accepted forms", () => {
+  const accepted = [
+    ["representative production shape", "G-TESTFIX001"],
+    ["minimum supported payload (6)", "G-ABC123"],
+    ["longer supported payload", "G-ABCDEFGHIJKLMNOPQRST"],
+    ["digits only payload", "G-1234567890"],
+    ["letters only payload", "G-ABCDEFGHIJ"],
+  ] as const;
+  for (const [label, id] of accepted) {
+    it(`accepts ${label}`, () => {
+      assert.equal(isSupportedGa4MeasurementId(id), true, `${label} should be supported`);
+    });
+  }
+});
+
+describe("C1b isSupportedGa4MeasurementId - rejected forms", () => {
+  const rejected = [
+    ["bare prefix", "G-"],
+    ["single char payload", "G-A"],
+    ["below the length floor", "G-ABC12"],
+    ["underscore separator", "G_ABC123"],
+    ["legacy Universal Analytics", "UA-12345-6"],
+    ["legacy UA with GA4-ish payload", "UA-CY38LKH4MR"],
+    ["no prefix at all", "CY38LKH4MR"],
+    ["lowercase prefix", "g-CY38LKH4MR"],
+    ["lowercase payload", "G-cy38lkh4mr"],
+    ["mixed case payload", "G-Cy38Lkh4Mr"],
+    ["embedded space", "G-CY38 LKH4MR"],
+    ["embedded tab", "G-CY38\tLKH4MR"],
+    ["second token after newline", "G-TESTFIX001\nG-OTHER12345"],
+    ["trailing punctuation", "G-TESTFIX001."],
+    ["leading punctuation", ".G-TESTFIX001"],
+    ["quoted value", '"G-TESTFIX001"'],
+    ["url-encoded newline", "G-TESTFIX001%0A"],
+    ["hyphen inside payload", "G-CY38-LKH4MR"],
+    ["Unicode lookalike (Cyrillic С)", "G-СY38LKH4MR"],
+    ["Unicode digit lookalike", "G-TESTFIX001​"],
+    ["implausibly long", "G-" + "A".repeat(64)],
+    ["arbitrary nonempty string", "gibberish"],
+    ["not-a-ga4-id", "not-a-ga4-id"],
+    ["empty string", ""],
+    ["whitespace only", "   "],
+  ] as const;
+  for (const [label, id] of rejected) {
+    it(`rejects ${label}`, () => {
+      assert.equal(isSupportedGa4MeasurementId(id), false, `${label} must be refused`);
+    });
+  }
+
+  it("rejects non-string values the API structurally permits", () => {
+    for (const v of [undefined, null, 42, true, {}, [], Symbol("G-ABCDEF")]) {
+      assert.equal(isSupportedGa4MeasurementId(v as unknown as string), false);
+    }
+  });
+});
+
+describe("C1b resolver - multi-source matrix", () => {
+  const V1 = "G-VALIDAAAA1";
+  const V2 = "G-VALIDBBBB2";
+  const BAD = "not-a-ga4-id";
+
+  const cases: Array<[string, Record<string, string>, string]> = [
+    ["valid + same valid", { [SERVER_KEY]: V1, [PUBLIC_KEY]: V1 }, "VALID"],
+    ["valid + conflicting valid", { [SERVER_KEY]: V1, [PUBLIC_KEY]: V2 }, "CONFLICT"],
+    ["valid + malformed", { [SERVER_KEY]: V1, [PUBLIC_KEY]: BAD }, "MALFORMED"],
+    ["malformed + valid", { [SERVER_KEY]: BAD, [PUBLIC_KEY]: V1 }, "MALFORMED"],
+    ["malformed + same malformed", { [SERVER_KEY]: BAD, [PUBLIC_KEY]: BAD }, "MALFORMED"],
+    ["missing + malformed", { [PUBLIC_KEY]: BAD }, "MALFORMED"],
+    ["whitespace-only + valid", { [SERVER_KEY]: "   ", [PUBLIC_KEY]: V1 }, "VALID"],
+    ["whitespace-only + malformed", { [SERVER_KEY]: "   ", [PUBLIC_KEY]: BAD }, "MALFORMED"],
+    ["legacy UA + valid", { [SERVER_KEY]: "UA-12345-6", [PUBLIC_KEY]: V1 }, "MALFORMED"],
+    ["both absent", {}, "MISSING"],
+  ];
+
+  for (const [label, env, expected] of cases) {
+    it(`${label} -> ${expected}`, () => {
+      assert.equal(resolveMeasurementId(env, DEFAULT_KEYS).status, expected);
+    });
+  }
+
+  it("a malformed SECONDARY source is not excused by a valid primary", () => {
+    const r = resolveMeasurementId({ [SERVER_KEY]: V1, [PUBLIC_KEY]: BAD }, DEFAULT_KEYS);
+    assert.equal(r.status, "MALFORMED");
+    assert.deepEqual((r as any).malformedKeys, [PUBLIC_KEY]);
+  });
+
+  it("MALFORMED carries key names only - no value, substring, or length", () => {
+    const r = resolveMeasurementId({ [SERVER_KEY]: BAD, [PUBLIC_KEY]: "UA-99999-1" }, DEFAULT_KEYS);
+    const s = JSON.stringify(r);
+    assert.doesNotMatch(s, /not-a-ga4-id/);
+    assert.doesNotMatch(s, /UA-99999-1/);
+    assert.doesNotMatch(s, /gibberish/);
+    assert.deepEqual((r as any).malformedKeys, [SERVER_KEY, PUBLIC_KEY]);
+  });
+});
+
+describe("C1b route - malformed configuration refuses with zero dispatch", () => {
+  const BAD_VALUES = ["not-a-ga4-id", "G_TYPO12345", "UA-12345-6", "G-", "gibberish", "g-lowercase1"];
+
+  for (const bad of BAD_VALUES) {
+    it(`refuses ${JSON.stringify(bad)} with 503, code, and NO dispatch`, async () => {
+      const { res, sent, text } = await callHandler({
+        [PUBLIC_KEY]: bad,
+        GA4_API_SECRET: STUB_SECRET,
+      });
+      assert.equal(res.status, 503, "must fail closed");
+      assert.equal(sent.length, 0, "must not dispatch to GA4");
+      assert.match(text, /GA4_CONFIG_MALFORMED/);
+      // Redaction is asserted for values that actually carry configured
+      // information. The bare prefix "G-" is excluded deliberately: it is the
+      // universal GA4 prefix, appears in this repo's docs, and appears in the
+      // refusal's own `Expected "G-" followed by ...` hint. Asserting its
+      // absence would not protect anything and would force the removal of a
+      // message an operator needs. Everything with a payload IS asserted.
+      if (bad.length > 2) {
+        assert.doesNotMatch(text, new RegExp(bad.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      }
+    });
+  }
+
+  it("names the offending KEY but never the value", async () => {
+    const { text } = await callHandler({
+      [SERVER_KEY]: "not-a-ga4-id",
+      GA4_API_SECRET: STUB_SECRET,
+    });
+    assert.match(text, new RegExp(SERVER_KEY));
+    assert.doesNotMatch(text, /not-a-ga4-id/);
+    assert.doesNotMatch(text, new RegExp(STUB_SECRET));
+  });
+
+  it("the four refusal classes are distinguishable by stable code", async () => {
+    const missing = await callHandler({ GA4_API_SECRET: STUB_SECRET });
+    assert.match(missing.text, /GA4_CONFIG_MISSING/);
+
+    const malformed = await callHandler({ [PUBLIC_KEY]: "nope", GA4_API_SECRET: STUB_SECRET });
+    assert.match(malformed.text, /GA4_CONFIG_MALFORMED/);
+
+    const conflict = await callHandler({
+      [SERVER_KEY]: "G-AAAAAAAAAA",
+      [PUBLIC_KEY]: "G-BBBBBBBBBB",
+      GA4_API_SECRET: STUB_SECRET,
+    });
+    assert.match(conflict.text, /GA4_CONFIG_CONFLICT/);
+
+    const badEvent = await callHandler(
+      { [PUBLIC_KEY]: "G-AAAAAAAAAA", GA4_API_SECRET: STUB_SECRET },
+      { name: "not_allowlisted" },
+    );
+    assert.equal(badEvent.res.status, 400, "invalid event input is 400, not a 503 config class");
+  });
+
+  it("valid configuration still dispatches exactly once (no regression)", async () => {
+    const { res, sent } = await callHandler({
+      [PUBLIC_KEY]: "G-VALIDAAAA1",
+      GA4_API_SECRET: STUB_SECRET,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].url, /measurement_id=G-VALIDAAAA1/);
+  });
+});
+
+/* ============================================================================
+ * REDACTION CONTRACT - malformed measurement id must not leak, even partially
+ *
+ * WHY THIS EXISTS: a mutation that appended `(got not-..., length 12)` to the
+ * refusal SURVIVED the entire mutation campaign. Every prior assertion checked
+ * only that the FULL value was absent. A prefix, a suffix, a length, a hash, or
+ * a case-transformed form is still disclosure of configured state.
+ *
+ * The sentinel is ASSEMBLED AT RUNTIME from segments so that (a) no literal in
+ * this file resembles a real identifier and (b) an assertion cannot pass merely
+ * because the constant was inlined somewhere.
+ * ========================================================================= */
+
+// Distinct 5-char segments. Deliberately not substrings of any English word or
+// of the fixed refusal text, so a hit is unambiguous evidence of disclosure.
+const SEG_HEAD = ["QZ", "XWV"].join("");
+const SEG_MID = ["JK", "PLM"].join("");
+const SEG_TAIL = ["BN", "TRY"].join("");
+const LEAK_SENTINEL = ["G-", SEG_HEAD, SEG_MID, SEG_TAIL].join(""); // shape-valid...
+const LEAK_SENTINEL_BAD = [SEG_HEAD, "!", SEG_MID, "!", SEG_TAIL].join(""); // ...and not
+const SENTINEL_LEN = String(LEAK_SENTINEL_BAD.length);
+
+/** Every form in which the value, or information derived from it, could escape. */
+function disclosureForms(value: string): Array<[string, string]> {
+  const forms: Array<[string, string]> = [
+    ["full value", value],
+    ["lowercase", value.toLowerCase()],
+    ["uppercase", value.toUpperCase()],
+    ["URL-encoded", encodeURIComponent(value)],
+    ["JSON-escaped", JSON.stringify(value).slice(1, -1)],
+    ["base64", Buffer.from(value).toString("base64")],
+    ["hex", Buffer.from(value).toString("hex")],
+    ["head segment", SEG_HEAD],
+    ["middle segment", SEG_MID],
+    ["tail segment", SEG_TAIL],
+    ["exact length", SENTINEL_LEN],
+    ["length phrase", `length ${SENTINEL_LEN}`],
+  ];
+  // Multi-char prefixes/suffixes of the unique segments (3..6). Shorter than 3
+  // would risk colliding with the fixed safe text, which would make the
+  // assertion pass for the wrong reason.
+  for (let n = 3; n <= 6 && n <= value.length; n += 1) {
+    forms.push([`prefix ${n}`, SEG_HEAD.slice(0, Math.min(n, SEG_HEAD.length))]);
+    forms.push([`suffix ${n}`, SEG_TAIL.slice(-Math.min(n, SEG_TAIL.length))]);
+  }
+  return forms;
+}
+
+function assertNoDisclosure(haystack: string, value: string, where: string): void {
+  const hay = haystack.toLowerCase();
+  for (const [label, form] of disclosureForms(value)) {
+    assert.ok(
+      !hay.includes(form.toLowerCase()),
+      `${where} disclosed the rejected value (${label}: ${JSON.stringify(form)}). ` +
+        `Public diagnostics may name KEYS and the expected FORM only. Body was: ${haystack}`,
+    );
+  }
+}
+
+describe("redaction contract: malformed measurement id", () => {
+
+  it("sentinel controls: the assertion helper can actually fail", () => {
+    // A check that cannot fail proves nothing. Prove each form is detected.
+    for (const [label, form] of disclosureForms(LEAK_SENTINEL_BAD)) {
+      assert.throws(
+        () => assertNoDisclosure(`prefix ${form} suffix`, LEAK_SENTINEL_BAD, "control"),
+        /disclosed the rejected value/,
+        `helper failed to detect disclosure form: ${label}`,
+      );
+    }
+    // ...and does not fire on the genuine safe message.
+    const safe = malformedMeasurementIdDiagnostic(["GA4_MEASUREMENT_ID"]);
+    assertNoDisclosure(safe.error, LEAK_SENTINEL_BAD, "safe baseline");
+  });
+
+  it("diagnostic constructor cannot receive a value: arity is 1", () => {
+    assert.equal(
+      malformedMeasurementIdDiagnostic.length,
+      1,
+      "the constructor must take key names only - adding a value parameter is the leak",
+    );
+  });
+
+  it("diagnostic carries a fixed reason, never derived from input", () => {
+    const a = malformedMeasurementIdDiagnostic(["GA4_MEASUREMENT_ID"]);
+    const b = malformedMeasurementIdDiagnostic(["NEXT_PUBLIC_GA_MEASUREMENT_ID"]);
+    assert.equal(a.reason, MALFORMED_MEASUREMENT_ID_REASON);
+    assert.equal(a.reason, b.reason);
+    assert.equal(a.code, "GA4_CONFIG_MALFORMED");
+  });
+
+  // ─── accuracy of the hint, bound to the validator ──────────────────────
+  //
+  // The refusal used to say "Expected the form G-XXXXXXXXXX", describing a
+  // fixed 10-character body the validator has never enforced. An operator
+  // holding a valid 8-character id would read that and "fix" a non-problem.
+  // These probe the REAL accepted bounds instead of trusting any literal, so
+  // reverting the wording - or changing the pattern without the sentence -
+  // fails here rather than in a customer's env.
+
+  it("the stated expected form matches the bounds the validator enforces", () => {
+    let observedMin: number | null = null;
+    let observedMax: number | null = null;
+    for (let n = 1; n <= 40; n += 1) {
+      if (isSupportedGa4MeasurementId(`G-${"A".repeat(n)}`)) {
+        if (observedMin === null) observedMin = n;
+        observedMax = n;
+      }
+    }
+    assert.ok(observedMin !== null && observedMax !== null, "validator accepts nothing");
+
+    const message = malformedMeasurementIdDiagnostic(["GA4_MEASUREMENT_ID"]).error;
+    assert.ok(
+      message.includes(String(observedMin)),
+      `hint must state the real minimum body length ${observedMin}; got: ${message}`,
+    );
+    assert.ok(
+      message.includes(String(observedMax)),
+      `hint must state the real maximum body length ${observedMax}; got: ${message}`,
+    );
+    assert.ok(
+      message.includes(GA4_MEASUREMENT_ID_EXPECTED_FORM),
+      "the refusal must use the single derived form description",
+    );
+  });
+
+  it("the hint never claims a fixed-width form", () => {
+    const message = malformedMeasurementIdDiagnostic(["GA4_MEASUREMENT_ID"]).error;
+    assert.doesNotMatch(
+      message,
+      /G-X{3,}/,
+      "a G-XXXX... placeholder implies an exact width the validator does not enforce",
+    );
+  });
+
+  // ─── the constructor must be the ONLY producer of this body ────────────
+  //
+  // Without this, a caller could re-inline its own message string and every
+  // other test here would still pass - the abstraction would look load-bearing
+  // while guaranteeing nothing. Deep equality ties the wire format to the one
+  // function whose signature makes disclosure impossible.
+
+  it("the route's 503 body IS the constructor's output, not a re-inlined string", async () => {
+    const keys = ["GA4_MEASUREMENT_ID"];
+    const handler = createTrackHandler({
+      allowedEvents: ["app_store_click"],
+      getEnv: () => ({ GA4_MEASUREMENT_ID: LEAK_SENTINEL_BAD, GA4_API_SECRET: "test-secret" }),
+      fetchImpl: async () => new Response(null, { status: 204 }),
+    });
+    const res = await handler(
+      new Request("https://example.test/api/track", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: "app_store_click" }),
+      }),
+    );
+    assert.equal(res.status, 503);
+    assert.deepEqual(
+      await res.json(),
+      malformedMeasurementIdDiagnostic(keys),
+      "route body must be produced by malformedMeasurementIdDiagnostic",
+    );
+  });
+
+  for (const [surfaceName, envFactory] of [
+    ["server key", () => ({ GA4_MEASUREMENT_ID: LEAK_SENTINEL_BAD })],
+    ["public key", () => ({ NEXT_PUBLIC_GA_MEASUREMENT_ID: LEAK_SENTINEL_BAD })],
+    ["both keys", () => ({
+      GA4_MEASUREMENT_ID: LEAK_SENTINEL_BAD,
+      NEXT_PUBLIC_GA_MEASUREMENT_ID: LEAK_SENTINEL_BAD,
+    })],
+  ] as Array<[string, () => Record<string, string>]>) {
+  it(`malformed via ${surfaceName}: 503 body discloses nothing derived from the value`, async () => {
+      let dispatched = 0;
+      const handler = createTrackHandler({
+        allowedEvents: ["app_store_click"],
+        getEnv: () => ({ ...envFactory(), GA4_API_SECRET: "test-secret" }),
+        fetchImpl: async () => {
+          dispatched += 1;
+          return new Response(null, { status: 204 });
+        },
+      });
+      const res = await handler(
+        new Request("https://example.test/api/track", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ event: "app_store_click" }),
+        }),
+      );
+      assert.equal(res.status, 503);
+      assert.equal(dispatched, 0, "must not dispatch on a malformed id");
+
+      const raw = await res.text();
+      assertNoDisclosure(raw, LEAK_SENTINEL_BAD, `${surfaceName} response body`);
+
+      // Positive half: the refusal must still be USEFUL - it names the keys.
+      const parsed = JSON.parse(raw);
+      assert.equal(parsed.code, "GA4_CONFIG_MALFORMED");
+      for (const key of Object.keys(envFactory())) {
+        assert.ok(parsed.error.includes(key), `refusal must name the rejected key ${key}`);
+      }
+    });
+  }
+
+  it("resolver result itself carries key names only, no values", () => {
+    const r = resolveMeasurementId(
+      { GA4_MEASUREMENT_ID: LEAK_SENTINEL_BAD, NEXT_PUBLIC_GA_MEASUREMENT_ID: LEAK_SENTINEL_BAD },
+      ["GA4_MEASUREMENT_ID", "NEXT_PUBLIC_GA_MEASUREMENT_ID"],
+    );
+    assert.equal(r.status, "MALFORMED");
+    assertNoDisclosure(JSON.stringify(r), LEAK_SENTINEL_BAD, "resolver result");
+  });
+
+  it("no derived information: two different malformed values give identical bodies", async () => {
+    // If the body varies with the value at all, something about the value crossed
+    // the boundary - even if no recognisable substring did.
+    const bodyFor = async (value: string) => {
+      const handler = createTrackHandler({
+        allowedEvents: ["app_store_click"],
+        getEnv: () => ({ GA4_MEASUREMENT_ID: value, GA4_API_SECRET: "test-secret" }),
+        fetchImpl: async () => new Response(null, { status: 204 }),
+      });
+      const res = await handler(
+        new Request("https://example.test/api/track", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ event: "app_store_click" }),
+        }),
+      );
+      return res.text();
+    };
+    const short = await bodyFor("x");
+    const long = await bodyFor(LEAK_SENTINEL_BAD + LEAK_SENTINEL_BAD);
+    assert.equal(short, long, "refusal body must not vary with the rejected value");
   });
 });

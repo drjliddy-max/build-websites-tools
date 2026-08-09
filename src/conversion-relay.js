@@ -195,6 +195,89 @@ export function isAllowedEvent(name, allowedEvents) {
 }
 
 /**
+ * Supported GA4 Measurement ID shape.
+ *
+ * THIS IS AN APPLICATION-LEVEL SUPPORTED-FORMAT CONTRACT, not a claim about what
+ * Google will forever emit. It is deliberately narrow because the failure it
+ * prevents is silent: GA4 answers 204 for an unrecognised measurement id and
+ * stores nothing, so a typo is indistinguishable from success at the wire.
+ * Refusing an unfamiliar-but-real future format is loud and fixable in one env
+ * edit; accepting a typo is silent and permanent. That asymmetry is why this
+ * fails closed rather than passing anything through.
+ *
+ * Derived from every id observed across this portfolio: `G-` followed by 10
+ * uppercase alphanumerics. The floor is set at 6 rather than 10 so the contract
+ * is not brittle against a shorter real id, while still rejecting `G-` and
+ * `G-A`. The ceiling rejects implausible values.
+ *
+ * NOT repaired, deliberately: a lowercase or `_`-separated value is REJECTED,
+ * not up-cased or rewritten. Silently repairing a malformed identifier would
+ * reintroduce exactly the "the system quietly picked something" behaviour this
+ * whole contract exists to remove.
+ */
+const GA4_MEASUREMENT_ID_MIN_BODY = 6;
+const GA4_MEASUREMENT_ID_MAX_BODY = 20;
+const GA4_MEASUREMENT_ID_PATTERN = new RegExp(
+  `^G-[A-Z0-9]{${GA4_MEASUREMENT_ID_MIN_BODY},${GA4_MEASUREMENT_ID_MAX_BODY}}$`,
+);
+
+/**
+ * The human description of the accepted form, DERIVED from the same two bounds
+ * the validator uses.
+ *
+ * WHY derived and not a literal: the refusal previously said "Expected the form
+ * G-XXXXXXXXXX", which describes a fixed 10-character body. The validator has
+ * never enforced that - it accepts 6 to 20. An operator reading that hint would
+ * conclude a valid 8-character id was the problem. Binding the sentence to the
+ * bounds means the message cannot drift from the contract again, because there
+ * is no second place to edit.
+ */
+export const GA4_MEASUREMENT_ID_EXPECTED_FORM =
+  `"G-" followed by ${GA4_MEASUREMENT_ID_MIN_BODY} to ${GA4_MEASUREMENT_ID_MAX_BODY} ` +
+  `uppercase letters or digits`;
+
+/**
+ * True when `value` is a GA4 Measurement ID this relay will dispatch to.
+ *
+ * Single source of truth - the pattern is not duplicated into the resolver or
+ * into tests.
+ */
+export function isSupportedGa4MeasurementId(value) {
+  return typeof value === "string" && GA4_MEASUREMENT_ID_PATTERN.test(value);
+}
+
+/** Fixed reason category for a malformed measurement id. Never derived from input. */
+export const MALFORMED_MEASUREMENT_ID_REASON = "malformed_identifier";
+
+/**
+ * Build the ONLY public diagnostic for a malformed measurement id.
+ *
+ * STRUCTURAL PROTECTION, not a convention: this function takes KEY NAMES and
+ * nothing else. There is no parameter for the offending value, its length, a
+ * prefix, a normalized form, or a hash - so a caller cannot interpolate one even
+ * by accident, and a reviewer can confirm that by reading the signature.
+ *
+ * WHY: a mutation that leaked `(got not-..., length 12)` into the refusal
+ * survived the entire v0.12.1 mutation campaign. Asserting only that the FULL
+ * value is absent does not prove a prefix, suffix, or length is absent. Partial
+ * disclosure of a configured identifier is still disclosure.
+ *
+ * Allowed content: the fixed reason, the expected FORM, and which configuration
+ * KEYS were rejected. Nothing derived from the supplied value.
+ */
+export function malformedMeasurementIdDiagnostic(malformedKeys) {
+  const keys = Array.isArray(malformedKeys) ? malformedKeys.join(" and ") : "";
+  return {
+    code: "GA4_CONFIG_MALFORMED",
+    reason: MALFORMED_MEASUREMENT_ID_REASON,
+    error:
+      `Unsupported GA4 measurement id in ${keys}. Expected ${GA4_MEASUREMENT_ID_EXPECTED_FORM}. ` +
+      `Refusing to dispatch - GA4 accepts an unrecognised id with 204 and stores nothing, ` +
+      `so this would look like success. No event was sent.`,
+  };
+}
+
+/**
  * Resolve the ONE effective measurement id from the declared env keys.
  *
  * WHY THIS IS NOT first-non-empty-wins any more.
@@ -212,11 +295,13 @@ export function isAllowedEvent(name, allowedEvents) {
  * attributable, and fixable in one env edit; choosing silently is none of those.
  *
  * Returns one of:
- *   { status: "VALID",    measurementId, sourceKeys, duplicate }
- *   { status: "MISSING",  keys }
- *   { status: "CONFLICT", conflictingKeys, keys }
+ *   { status: "VALID",     measurementId, sourceKeys, duplicate }
+ *   { status: "MISSING",   keys }
+ *   { status: "MALFORMED", malformedKeys, keys }
+ *   { status: "CONFLICT",  conflictingKeys, keys }
  *
- * CONFLICT deliberately carries NO values, so a caller cannot leak a
+ * CONFLICT and MALFORMED deliberately carry NO values - not the value, not a
+ * prefix, suffix, length, hash, or normalized form - so a caller cannot leak a
  * measurement id into an error string by accident. Empty and whitespace-only
  * values are treated as absent; surrounding whitespace is trimmed and nothing
  * else about the identifier is rewritten.
@@ -234,6 +319,22 @@ export function resolveMeasurementId(env, keys) {
 
   if (populated.length === 0) {
     return { status: "MISSING", keys: declared };
+  }
+
+  // MALFORMED is checked BEFORE conflict, and a malformed SECONDARY source is
+  // not excused by a valid primary. If any configured source holds a value this
+  // relay cannot dispatch to, the configuration is wrong and a human must look
+  // at it - silently preferring the readable one would hide a real mistake and
+  // could mean half the deployment's config points somewhere unusable.
+  const malformed = populated.filter((p) => !isSupportedGa4MeasurementId(p.value));
+  if (malformed.length > 0) {
+    return {
+      // Key NAMES only. No value, no substring, no length - a caller must not be
+      // able to reconstruct or echo a configured identifier from this object.
+      status: "MALFORMED",
+      malformedKeys: malformed.map((p) => p.key),
+      keys: declared,
+    };
   }
 
   const distinct = [...new Set(populated.map((p) => p.value))];
@@ -368,6 +469,7 @@ export function createTrackHandler(options) {
     if (resolution.status === "CONFLICT") {
       return jsonResponse(
         {
+          code: "GA4_CONFIG_CONFLICT",
           error:
             `Ambiguous GA4 configuration: ${resolution.conflictingKeys.join(" and ")} are both set to different measurement ids. ` +
             `Refusing to choose - set exactly one, or make them identical. No event was sent.`,
@@ -376,9 +478,19 @@ export function createTrackHandler(options) {
       );
     }
 
+    // A malformed id is the defect class this refusal exists for: GA4 answers
+    // 204 for an id it does not recognise and stores nothing, so without this
+    // check a typo produces an indistinguishable-from-success 200 forever.
+    if (resolution.status === "MALFORMED") {
+      // Single safe constructor. Do not inline a message here - see the note on
+      // malformedMeasurementIdDiagnostic for why the value cannot be a parameter.
+      return jsonResponse(malformedMeasurementIdDiagnostic(resolution.malformedKeys), 503);
+    }
+
     if (resolution.status === "MISSING" || !apiSecret) {
       return jsonResponse(
         {
+          code: "GA4_CONFIG_MISSING",
           error:
             `A measurement id (one of: ${measurementIdEnvKeys.join(", ")}) and GA4_API_SECRET must be configured.`,
         },

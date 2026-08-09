@@ -292,7 +292,44 @@ per consumer and are declared explicitly.
 it. Removal requires migrating their production env first and is out of scope for any
 release that does not do that migration.
 
-### Resolution: VALID / MISSING / CONFLICT
+### Supported measurement-id format (v0.12.1)
+
+A configured value is not valid merely because it is a nonempty string.
+
+`isSupportedGa4MeasurementId(value)` accepts `G-` followed by **6-20 uppercase
+alphanumerics**. Everything else is refused: bare `G-`, `G_UNDERSCORE`, legacy
+`UA-...`, lowercase, embedded whitespace, punctuation, Unicode lookalikes,
+multi-token values, and implausibly long values.
+
+**This is an application-level supported-format contract, not a claim about what
+Google will forever emit.** It is deliberately narrow because the failure it
+prevents is silent: GA4 answers **204** for an id it does not recognise and stores
+nothing, so a typo is indistinguishable from success at the wire. Refusing an
+unfamiliar-but-real future format is loud and fixed by one env edit; accepting a
+typo is silent and permanent.
+
+Malformed values are **refused, never repaired** - a lowercase or `_`-separated
+value is not up-cased or rewritten. Silently repairing an identifier would
+reintroduce the "the system quietly picked something" behaviour this contract
+exists to remove.
+
+A malformed **secondary** source is not excused by a valid primary. If any
+configured source holds an unusable value, the configuration is wrong and a human
+must look at it.
+
+### Refusal codes
+
+| Code | Meaning | Status |
+|---|---|---|
+| `GA4_CONFIG_MISSING` | no declared key populated | 503 |
+| `GA4_CONFIG_MALFORMED` | a populated key holds an unsupported id | 503 |
+| `GA4_CONFIG_CONFLICT` | populated keys hold different supported ids | 503 |
+| *(none)* | invalid event input | 400 |
+
+All refusals name configuration **keys** and never their values. No dispatch
+occurs, and no fallback identity cookie is minted, for any 503 class.
+
+### Resolution: VALID / MISSING / MALFORMED / CONFLICT
 
 `resolveMeasurementId(env, keys)` replaces silent first-non-empty selection.
 
@@ -301,6 +338,7 @@ release that does not do that migration.
 | No declared key populated | `MISSING` | **503**, names expected keys |
 | Exactly one populated | `VALID` | dispatch to that id |
 | Several populated, values equal after trim | `VALID` (`duplicate: true`) | dispatch once |
+| Any populated value malformed | **`MALFORMED`** | **503**, names the offending KEYS, never their values, sends nothing |
 | Several populated, values differ | **`CONFLICT`** | **503**, names the conflicting KEYS, never their values, sends nothing |
 
 Empty and whitespace-only values are absent. Surrounding whitespace is trimmed; the
