@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 import {
   malformedMeasurementIdDiagnostic,
   MALFORMED_MEASUREMENT_ID_REASON,
+  GA4_MEASUREMENT_ID_EXPECTED_FORM,
   createTrackHandler,
   isSupportedGa4MeasurementId,
   resolveMeasurementId,
@@ -550,7 +551,7 @@ describe("C1b route - malformed configuration refuses with zero dispatch", () =>
       // Redaction is asserted for values that actually carry configured
       // information. The bare prefix "G-" is excluded deliberately: it is the
       // universal GA4 prefix, appears in this repo's docs, and appears in the
-      // refusal's own "Expected the form G-XXXXXXXXXX" hint. Asserting its
+      // refusal's own `Expected "G-" followed by ...` hint. Asserting its
       // absence would not protect anything and would force the removal of a
       // message an operator needs. Everything with a payload IS asserted.
       if (bad.length > 2) {
@@ -690,6 +691,79 @@ describe("redaction contract: malformed measurement id", () => {
     assert.equal(a.reason, MALFORMED_MEASUREMENT_ID_REASON);
     assert.equal(a.reason, b.reason);
     assert.equal(a.code, "GA4_CONFIG_MALFORMED");
+  });
+
+  // ─── accuracy of the hint, bound to the validator ──────────────────────
+  //
+  // The refusal used to say "Expected the form G-XXXXXXXXXX", describing a
+  // fixed 10-character body the validator has never enforced. An operator
+  // holding a valid 8-character id would read that and "fix" a non-problem.
+  // These probe the REAL accepted bounds instead of trusting any literal, so
+  // reverting the wording - or changing the pattern without the sentence -
+  // fails here rather than in a customer's env.
+
+  it("the stated expected form matches the bounds the validator enforces", () => {
+    let observedMin: number | null = null;
+    let observedMax: number | null = null;
+    for (let n = 1; n <= 40; n += 1) {
+      if (isSupportedGa4MeasurementId(`G-${"A".repeat(n)}`)) {
+        if (observedMin === null) observedMin = n;
+        observedMax = n;
+      }
+    }
+    assert.ok(observedMin !== null && observedMax !== null, "validator accepts nothing");
+
+    const message = malformedMeasurementIdDiagnostic(["GA4_MEASUREMENT_ID"]).error;
+    assert.ok(
+      message.includes(String(observedMin)),
+      `hint must state the real minimum body length ${observedMin}; got: ${message}`,
+    );
+    assert.ok(
+      message.includes(String(observedMax)),
+      `hint must state the real maximum body length ${observedMax}; got: ${message}`,
+    );
+    assert.ok(
+      message.includes(GA4_MEASUREMENT_ID_EXPECTED_FORM),
+      "the refusal must use the single derived form description",
+    );
+  });
+
+  it("the hint never claims a fixed-width form", () => {
+    const message = malformedMeasurementIdDiagnostic(["GA4_MEASUREMENT_ID"]).error;
+    assert.doesNotMatch(
+      message,
+      /G-X{3,}/,
+      "a G-XXXX... placeholder implies an exact width the validator does not enforce",
+    );
+  });
+
+  // ─── the constructor must be the ONLY producer of this body ────────────
+  //
+  // Without this, a caller could re-inline its own message string and every
+  // other test here would still pass - the abstraction would look load-bearing
+  // while guaranteeing nothing. Deep equality ties the wire format to the one
+  // function whose signature makes disclosure impossible.
+
+  it("the route's 503 body IS the constructor's output, not a re-inlined string", async () => {
+    const keys = ["GA4_MEASUREMENT_ID"];
+    const handler = createTrackHandler({
+      allowedEvents: ["app_store_click"],
+      getEnv: () => ({ GA4_MEASUREMENT_ID: LEAK_SENTINEL_BAD, GA4_API_SECRET: "test-secret" }),
+      fetchImpl: async () => new Response(null, { status: 204 }),
+    });
+    const res = await handler(
+      new Request("https://example.test/api/track", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: "app_store_click" }),
+      }),
+    );
+    assert.equal(res.status, 503);
+    assert.deepEqual(
+      await res.json(),
+      malformedMeasurementIdDiagnostic(keys),
+      "route body must be produced by malformedMeasurementIdDiagnostic",
+    );
   });
 
   for (const [surfaceName, envFactory] of [

@@ -62,6 +62,12 @@ export type MeasurementIdResolution =
 export declare const MALFORMED_MEASUREMENT_ID_REASON: "malformed_identifier";
 
 /**
+ * Human description of the accepted measurement-id form, derived from the same
+ * bounds the validator enforces so the sentence cannot drift from the contract.
+ */
+export declare const GA4_MEASUREMENT_ID_EXPECTED_FORM: string;
+
+/**
  * Build the ONLY public diagnostic for a malformed measurement id.
  * Takes KEY NAMES and nothing else - there is deliberately no parameter for the
  * offending value, so a caller cannot interpolate one. See the .js for why.

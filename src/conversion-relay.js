@@ -215,7 +215,26 @@ export function isAllowedEvent(name, allowedEvents) {
  * reintroduce exactly the "the system quietly picked something" behaviour this
  * whole contract exists to remove.
  */
-const GA4_MEASUREMENT_ID_PATTERN = /^G-[A-Z0-9]{6,20}$/;
+const GA4_MEASUREMENT_ID_MIN_BODY = 6;
+const GA4_MEASUREMENT_ID_MAX_BODY = 20;
+const GA4_MEASUREMENT_ID_PATTERN = new RegExp(
+  `^G-[A-Z0-9]{${GA4_MEASUREMENT_ID_MIN_BODY},${GA4_MEASUREMENT_ID_MAX_BODY}}$`,
+);
+
+/**
+ * The human description of the accepted form, DERIVED from the same two bounds
+ * the validator uses.
+ *
+ * WHY derived and not a literal: the refusal previously said "Expected the form
+ * G-XXXXXXXXXX", which describes a fixed 10-character body. The validator has
+ * never enforced that - it accepts 6 to 20. An operator reading that hint would
+ * conclude a valid 8-character id was the problem. Binding the sentence to the
+ * bounds means the message cannot drift from the contract again, because there
+ * is no second place to edit.
+ */
+export const GA4_MEASUREMENT_ID_EXPECTED_FORM =
+  `"G-" followed by ${GA4_MEASUREMENT_ID_MIN_BODY} to ${GA4_MEASUREMENT_ID_MAX_BODY} ` +
+  `uppercase letters or digits`;
 
 /**
  * True when `value` is a GA4 Measurement ID this relay will dispatch to.
@@ -252,7 +271,7 @@ export function malformedMeasurementIdDiagnostic(malformedKeys) {
     code: "GA4_CONFIG_MALFORMED",
     reason: MALFORMED_MEASUREMENT_ID_REASON,
     error:
-      `Unsupported GA4 measurement id in ${keys}. Expected the form G-XXXXXXXXXX. ` +
+      `Unsupported GA4 measurement id in ${keys}. Expected ${GA4_MEASUREMENT_ID_EXPECTED_FORM}. ` +
       `Refusing to dispatch - GA4 accepts an unrecognised id with 204 and stores nothing, ` +
       `so this would look like success. No event was sent.`,
   };
