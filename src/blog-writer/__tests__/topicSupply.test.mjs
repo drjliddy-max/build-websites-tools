@@ -218,3 +218,86 @@ test("the local provider is preferred when it succeeds, per the local-first mand
   assert.equal(article.generation.providerId, "local");
   assert.equal(article.generation.route.length, 1);
 });
+
+// ── REGRESSION (found by the qirofit migration, v0.15.0) ───────────────────
+// v0.15.0 shipped generateWithProviderRouting and the pipeline never called it.
+// A consumer passing `providers` got only deps.provider, so liddy's fallback was
+// unreachable from every consumer. Same shape as v0.13.0 shipping a pipeline
+// whose publisher had no implementation: exported but not wired.
+
+test("REGRESSION: the pipeline routes across `providers`, it does not ignore them", async () => {
+  const { runBlogWriterPipeline } = await import("../pipeline.js");
+  const { buildRegistry } = await import("../registry.js");
+  const { createPexelsProvider, createMemoryStore } = await import("../imageProvider.js");
+  const { createDurableReporter, createInMemoryTestSink } = await import("../proof.js");
+
+  const SITE = {
+    siteId: "liddy", domain: "liddypodiatryandprevention.com", laneKey: "blog-writer-liddy",
+    repository: { owner: "drjliddy-max", name: "liddy-podiatry-site" }, blogPath: "/blog",
+    keywordSource: { primary: "p.csv" },
+    contentContext: { audience: "patients", voice: "clinically cautious", prohibitedTerms: [] },
+    imagePolicy: { required: true, provider: "pexels" },
+    publication: { adapter: "github-repo-commit", workflowFile: "w.yml", schedulePath: "s.json", draftDir: "d" },
+    monitorKey: "blog-writer-liddy",
+  };
+
+  process.env.PEXELS_API_KEY = "fixture-key";
+  const fixtureFetch = async (url) => String(url).includes("api.pexels.com")
+    ? { ok: true, status: 200, json: async () => ({ photos: [{ id: 1, width: 3000, alt: "a photograph of a clinic room", photographer: "P", src: { large2x: "https://images.pexels.com/x.jpg" } }] }) }
+    : { ok: true, status: 200, headers: { get: () => "image/jpeg" }, arrayBuffer: async () => new ArrayBuffer(300_000) };
+
+  const weak = { id: "local", model: "phi4:14b", complete: async () => SHORT };
+  const strong = { id: "hosted", model: "claude-sonnet-5", isAvailable: () => true, complete: async () => GOOD };
+
+  const result = await runBlogWriterPipeline(
+    { siteId: "liddy", occurrence: "2026-08-22", mode: "dry-run" },
+    {
+      registry: buildRegistry([SITE]),
+      providers: [weak, strong],
+      schedule: { load: async () => ({ published: [{ slug: "prior", title: "Prior", target_date: "2026-08-08", keywords: ["other"] }], queue: [] }) },
+      keywords: { load: async () => ({ primary: [{ keyword: "foot numbness and tingling" }], secondary: [] }) },
+      imageProvider: createPexelsProvider({ fetchImpl: fixtureFetch }),
+      imageStore: createMemoryStore(),
+      reporter: createDurableReporter({ sink: createInMemoryTestSink() }),
+      verifier: { check: async () => ({ status: 200 }) },
+      maxGenerationAttempts: 2,
+    },
+  );
+
+  assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
+  assert.equal(result.proof.provenance.generationProvider, "hosted",
+    "the proof must name the provider that actually produced the article");
+  const generate = result.stages.find((s) => s.stage === "generate");
+  assert.deepEqual(generate.detail.route.map((r) => `${r.providerId}:${r.outcome}`), ["local:rejected", "hosted:accepted"]);
+});
+
+test("REGRESSION: a single `provider` still works and is the one-element route", async () => {
+  const { runBlogWriterPipeline } = await import("../pipeline.js");
+  const { buildRegistry } = await import("../registry.js");
+  const { createPexelsProvider, createMemoryStore } = await import("../imageProvider.js");
+  const { createDurableReporter, createInMemoryTestSink } = await import("../proof.js");
+  const SITE = {
+    siteId: "liddy2", domain: "example.com", laneKey: "lane-2",
+    repository: { owner: "o", name: "n" }, blogPath: "/blog", keywordSource: { primary: "p" },
+    contentContext: { audience: "patients", voice: "cautious", prohibitedTerms: [] },
+    imagePolicy: { required: false, provider: "pexels" },
+    publication: { adapter: "github-repo-commit", workflowFile: "w", schedulePath: "s", draftDir: "d" },
+    monitorKey: "m",
+  };
+  const result = await runBlogWriterPipeline(
+    { siteId: "liddy2", occurrence: "2026-08-22", mode: "dry-run" },
+    {
+      registry: buildRegistry([SITE]),
+      provider: { id: "local", model: "phi4:14b", complete: async () => GOOD },
+      schedule: { load: async () => ({ published: [{ slug: "p", title: "P", target_date: "2026-08-08", keywords: ["x"] }], queue: [] }) },
+      keywords: { load: async () => ({ primary: [{ keyword: "foot numbness and tingling" }], secondary: [] }) },
+      imageProvider: createPexelsProvider({ fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ photos: [] }) }) }),
+      imageStore: createMemoryStore(),
+      reporter: createDurableReporter({ sink: createInMemoryTestSink() }),
+      verifier: { check: async () => ({ status: 200 }) },
+      maxGenerationAttempts: 2,
+    },
+  );
+  assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
+  assert.equal(result.proof.provenance.generationProvider, "local");
+});
