@@ -21,6 +21,7 @@ import {
   resolveCadenceAnchor,
 } from "./cadence.js";
 import { DISALLOWED_IMAGE_PATHS } from "./registry.js";
+import { resolveTopic, TopicSupplyError } from "./topicSupply.js";
 import { generateArticle } from "./generator.js";
 import { acquireImage } from "./imageProvider.js";
 import {
@@ -155,17 +156,19 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
       slugs: published.map((entry) => entry.slug).filter(Boolean),
       titles: published.map((entry) => entry.title).filter(Boolean),
     };
-    const candidates = await deps.keywords.load(site);
-    const usedKeywords = new Set(
-      published.flatMap((entry) => (entry.keywords ?? []).map((k) => k.toLowerCase())),
-    );
-    const topic = candidates.find(
-      (candidate) => !usedKeywords.has(candidate.keyword.toLowerCase()),
-    );
-    if (!topic) {
-      throw new PipelineError("resolve-topic", `${siteId} has no unused keyword; the pool is exhausted.`);
-    }
-    record("resolve-topic", true, topic.keyword);
+    const supply = await deps.keywords.load(site);
+    const primary = Array.isArray(supply) ? supply : supply.primary ?? [];
+    const secondary = Array.isArray(supply) ? [] : supply.secondary ?? [];
+    const topic = resolveTopic({
+      site,
+      primary,
+      secondary,
+      history: {
+        titles: history.titles,
+        keywords: published.flatMap((entry) => entry.keywords ?? []),
+      },
+    });
+    record("resolve-topic", true, { keyword: topic.keyword, provenance: topic.provenance });
 
     // ── 6/7. context + generation ─────────────────────────────────────────
     // The validator is injected into generation so a rejected draft is repaired
@@ -241,6 +244,7 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
           generatedBy: "canonical-pipeline",
           generationProvider: deps.provider.id,
           generationModel: deps.provider.model,
+          topicProvenance: topic.provenance,
           imageProvider: acquired.image?.provider ?? null,
           note: "dry-run: generated, validated and image-acquired; nothing committed or published",
         },
@@ -304,6 +308,7 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
         generatedBy: "canonical-pipeline",
         generationProvider: deps.provider.id,
         generationModel: deps.provider.model,
+        topicProvenance: topic.provenance,
         imageProvider: acquired.image.provider,
       },
       pipelineVersion: PIPELINE_VERSION,

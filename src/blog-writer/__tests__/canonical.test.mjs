@@ -644,13 +644,40 @@ test("pipeline: a schedule already carrying the occurrence is a no-op", async ()
   assert.equal(result.idempotentNoOp, true);
 });
 
-test("pipeline: an exhausted keyword pool fails rather than repeating a topic", async () => {
+test("pipeline: an exhausted supply with no replenishment fails rather than repeating a topic", async () => {
   const deps = pipelineDeps({ modelOutput: "{}", schedule: ANCHORED_SCHEDULE });
-  deps.keywords = { load: async () => [] };
+  deps.keywords = { load: async () => ({ primary: [], secondary: [] }) };
   const result = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "dry-run" },
     deps,
   );
   assert.equal(result.ok, false);
-  assert.match(result.proof.failure.reason, /no unused keyword/);
+  assert.match(result.proof.failure.reason, /primary keywords exhausted/);
+});
+
+test("pipeline: an exhausted primary pool is rescued by replenishment", async () => {
+  const deps = pipelineDeps({
+    modelOutput: JSON.stringify({
+      title: GOOD_ARTICLE.title,
+      metaDescription: GOOD_ARTICLE.metaDescription,
+      body: GOOD_ARTICLE.body,
+      imageQuery: GOOD_ARTICLE.imageQuery,
+    }),
+    schedule: {
+      published: [{ slug: "prior", title: "A prior article", target_date: "2026-08-08", keywords: ["cupping therapy Los Angeles"] }],
+      queue: [],
+    },
+  });
+  deps.keywords = {
+    load: async () => ({
+      primary: [{ keyword: "cupping therapy Los Angeles" }],
+      secondary: [{ keyword: "cupping therapy for athletes" }],
+    }),
+  };
+  const result = await runBlogWriterPipeline(
+    { siteId: "qirofit", occurrence: "2026-08-22", mode: "dry-run" },
+    deps,
+  );
+  assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
+  assert.equal(result.proof.provenance.topicProvenance, "REPLENISHED_TOPIC");
 });
