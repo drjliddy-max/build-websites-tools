@@ -122,7 +122,22 @@ export function createPexelsProvider({ apiKeyEnv = "PEXELS_API_KEY", fetchImpl =
  * Returns a descriptor carrying everything validation and proof need, never a
  * bare URL, because a URL alone cannot be checked for type, size or provenance.
  */
-export async function acquireImage({ site, article, provider, store, minWidth = 1200 }) {
+/**
+ * Public path for a stored image.
+ *
+ * Pure derivation. This used to come from an injected "store" whose only
+ * production contribution, after the v0.24.0 byte fix, was returning this
+ * string; the bytes themselves go to the publisher, which owns persistence and
+ * already encodes the same layout in createDefaultAdapter.imagePath().
+ *
+ * An abstraction named "store" that stores nothing is how a reader concludes
+ * the bytes are handled here. They are not.
+ */
+export function imagePublicPath(filename, publicPrefix = "/photos") {
+  return `${publicPrefix}/${filename}`;
+}
+
+export async function acquireImage({ site, article, provider, minWidth = 1200, publicPrefix = "/photos" }) {
   const policy = site.imagePolicy;
 
   if (!policy.required) {
@@ -171,8 +186,6 @@ export async function acquireImage({ site, article, provider, store, minWidth = 
 
   // Storage is injected so a dry run exercises the identical path without
   // writing into a repo.
-  const stored = await store.put({ filename, buffer, contentType });
-
   const alt = candidate.alt?.trim();
   return {
     status: "acquired",
@@ -182,7 +195,7 @@ export async function acquireImage({ site, article, provider, store, minWidth = 
       // silently skipped image placement, so a live Pexels 200 proved nothing
       // about publication readiness.
       buffer,
-      url: stored.publicPath,
+      url: imagePublicPath(filename, publicPrefix),
       alt: alt && alt.length >= 15 ? alt : `${article.title}, related photograph`,
       provider: "pexels",
       photographer: candidate.photographer ?? "Pexels",
@@ -198,19 +211,3 @@ export async function acquireImage({ site, article, provider, store, minWidth = 
   };
 }
 
-/** In-memory store for dry runs and tests. Never touches a repository. */
-export function createMemoryStore({ publicPrefix = "/photos" } = {}) {
-  const files = new Map();
-  return {
-    id: "memory",
-    async put({ filename, buffer, contentType }) {
-      if (files.has(filename)) {
-        throw new ImageAcquisitionError(`Refusing to overwrite existing asset ${filename}.`);
-      }
-      files.set(filename, { buffer, contentType });
-      return { publicPath: `${publicPrefix}/${filename}`, bytes: buffer.length };
-    },
-    get: (filename) => files.get(filename),
-    size: () => files.size,
-  };
-}

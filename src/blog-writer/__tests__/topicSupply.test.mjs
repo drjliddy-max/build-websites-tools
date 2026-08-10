@@ -15,7 +15,7 @@ import {
   findNearDuplicate,
   isInScope,
   TopicSupplyError,
-  TOPIC_PROVENANCE,
+  TOPIC_PROVENANCE
 } from "../topicSupply.js";
 import { generateWithProviderRouting, GenerationError, createHostedProvider } from "../generator.js";
 import { validateArticle } from "../validators.js";
@@ -30,8 +30,8 @@ const BMJ = {
     audience: "new parents",
     voice: "warm, practical",
     prohibitedTerms: ["medical advice"],
-    forbiddenTopics: ["ADA compliance", "website monitoring"],
-  },
+    forbiddenTopics: ["ADA compliance", "website monitoring"]
+  }
 };
 
 const JEFF = {
@@ -42,8 +42,8 @@ const JEFF = {
     audience: "conference organisers booking a keynote speaker",
     voice: "direct, credible",
     prohibitedTerms: [],
-    forbiddenTopics: ["podiatry", "baby milestones"],
-  },
+    forbiddenTopics: ["podiatry", "baby milestones"]
+  }
 };
 
 // ── the deadlock, reproduced ───────────────────────────────────────────────
@@ -53,7 +53,7 @@ test("REGRESSION (bmj): primary pool exhausted deadlocks without replenishment",
   const history = { titles: [], keywords: ["baby milestone tracker app", "baby photo book"] };
   assert.throws(
     () => resolveTopic({ site: BMJ, primary, secondary: [], history }),
-    TopicSupplyError,
+    TopicSupplyError
   );
 });
 
@@ -62,7 +62,7 @@ test("REGRESSION (jeffrystein): primary pool exhausted deadlocks without repleni
   const history = { titles: [], keywords: ["keynote speaker for conference", "consciousness comedian"] };
   assert.throws(
     () => resolveTopic({ site: JEFF, primary, secondary: [], history }),
-    TopicSupplyError,
+    TopicSupplyError
   );
 });
 
@@ -71,7 +71,7 @@ test("BMJ_TOPIC_SUPPLY_READY: replenishment resolves the exhausted lane", () => 
     site: BMJ,
     primary: ["baby milestone tracker app", "baby photo book"],
     secondary: ["how to organise baby photos by month", "when do babies start crawling"],
-    history: { titles: [], keywords: ["baby milestone tracker app", "baby photo book"] },
+    history: { titles: [], keywords: ["baby milestone tracker app", "baby photo book"] }
   });
   assert.equal(topic.provenance, TOPIC_PROVENANCE.REPLENISHED);
   assert.equal(topic.keyword, "how to organise baby photos by month");
@@ -82,7 +82,7 @@ test("JEFFRYSTEIN_TOPIC_SUPPLY_READY: replenishment resolves the exhausted lane"
     site: JEFF,
     primary: ["keynote speaker for conference", "consciousness comedian"],
     secondary: ["what makes a closing keynote land", "booking a speaker for a sales kickoff"],
-    history: { titles: [], keywords: ["keynote speaker for conference", "consciousness comedian"] },
+    history: { titles: [], keywords: ["keynote speaker for conference", "consciousness comedian"] }
   });
   assert.equal(topic.provenance, TOPIC_PROVENANCE.REPLENISHED);
 });
@@ -94,7 +94,7 @@ test("an available primary keyword is used before any replenishment", () => {
     site: BMJ,
     primary: ["baby milestone tracker app", "baby photo book"],
     secondary: ["something else entirely"],
-    history: { titles: [], keywords: ["baby milestone tracker app"] },
+    history: { titles: [], keywords: ["baby milestone tracker app"] }
   });
   assert.equal(topic.provenance, TOPIC_PROVENANCE.PRIMARY);
   assert.equal(topic.keyword, "baby photo book");
@@ -114,9 +114,9 @@ test("a near-duplicate of a published TITLE is rejected", () => {
       site: BMJ,
       primary: [],
       secondary: ["when do babies start crawling"],
-      history: { titles: ["When Do Babies Start Crawling?"], keywords: [] },
+      history: { titles: ["When Do Babies Start Crawling?"], keywords: [] }
     }),
-    /no replenishment candidate survived/,
+    /no replenishment candidate survived/
   );
 });
 
@@ -125,7 +125,7 @@ test("rejected candidates are reported, so exhaustion is explicable", () => {
     site: BMJ,
     primary: [],
     secondary: ["baby sleep regression", "choosing a first pair of shoes"],
-    history: { titles: ["Sleep regression in babies"], keywords: [] },
+    history: { titles: ["Sleep regression in babies"], keywords: [] }
   });
   assert.equal(topic.keyword, "choosing a first pair of shoes");
   assert.equal(topic.rejectedCandidates.length, 1);
@@ -149,7 +149,7 @@ test("a candidate carrying a prohibited term is refused", () => {
 const LIDDY = {
   siteId: "liddy",
   domain: "liddypodiatryandprevention.com",
-  contentContext: { audience: "patients", voice: "clinically cautious", prohibitedTerms: [] },
+  contentContext: { audience: "patients", voice: "clinically cautious", prohibitedTerms: [] }
 };
 
 const CONSTRAINTS = { titleMin: 20, titleMax: 70, metaMin: 70, metaMax: 160, bodyMinWords: 400, bodyMaxWords: 2500, minH2Count: 3 };
@@ -169,14 +169,14 @@ const GOOD = JSON.stringify({
     { heading: "What to check first", body: PROSE.repeat(12) },
     { heading: "When to book", body: PROSE.repeat(12) },
   ],
-  imageQuery: "clinical foot examination",
+  imageQuery: "clinical foot examination"
 });
 const SHORT = JSON.stringify({
   title: "Foot numbness and tingling, what to check first",
   metaDescription: "Numbness in the foot has several common causes. Here is how to tell them apart and when it is worth booking an appointment.",
   introduction: "Too short.",
   sections: [{ heading: "One", body: "Too short." }, { heading: "Two", body: "x." }, { heading: "Three", body: "y." }],
-  imageQuery: "x",
+  imageQuery: "x"
 });
 
 const routingArgs = {
@@ -185,7 +185,7 @@ const routingArgs = {
   occurrence: "2026-08-22",
   constraints: CONSTRAINTS,
   maxAttempts: 2,
-  validate: (candidate) => validateArticle({ article: candidate, site: LIDDY, history: { slugs: [], titles: [] } }),
+  validate: (candidate) => validateArticle({ article: candidate, site: LIDDY, history: { slugs: [], titles: [] } })
 };
 
 test("LIDDY_PROVIDER_FALLBACK: a failing local provider routes to the alternate", async () => {
@@ -196,7 +196,7 @@ test("LIDDY_PROVIDER_FALLBACK: a failing local provider routes to the alternate"
   assert.equal(article.generation.providerId, "hosted");
   assert.deepEqual(
     article.generation.route.map((r) => `${r.providerId}:${r.outcome}`),
-    ["local:rejected", "hosted:accepted"],
+    ["local:rejected", "hosted:accepted"]
   );
 });
 
@@ -205,7 +205,7 @@ test("VALIDATORS_UNCHANGED: routing never lowers the bar, it only changes provid
   const badB = { id: "hosted", model: "b", isAvailable: () => true, complete: async () => SHORT };
   await assert.rejects(
     () => generateWithProviderRouting({ providers: [badA, badB], ...routingArgs }),
-    (error) => error instanceof GenerationError && /All 2 provider\(s\) failed/.test(error.message),
+    (error) => error instanceof GenerationError && /All 2 provider\(s\) failed/.test(error.message)
   );
 });
 
@@ -235,7 +235,7 @@ test("the local provider is preferred when it succeeds, per the local-first mand
 test("REGRESSION: the pipeline routes across `providers`, it does not ignore them", async () => {
   const { runBlogWriterPipeline } = await import("../pipeline.js");
   const { buildRegistry } = await import("../registry.js");
-  const { createPexelsProvider, createMemoryStore } = await import("../imageProvider.js");
+  const { createPexelsProvider } = await import("../imageProvider.js");
   const { createDurableReporter, createInMemoryTestSink } = await import("../proof.js");
 
   const SITE = {
@@ -245,7 +245,7 @@ test("REGRESSION: the pipeline routes across `providers`, it does not ignore the
     contentContext: { audience: "patients", voice: "clinically cautious", prohibitedTerms: [] },
     imagePolicy: { required: true, provider: "pexels" },
     publication: { adapter: "github-repo-commit", workflowFile: "w.yml", schedulePath: "s.json", draftDir: "d" },
-    monitorKey: "blog-writer-liddy",
+    monitorKey: "blog-writer-liddy"
   };
 
   process.env.PEXELS_API_KEY = "fixture-key";
@@ -264,11 +264,10 @@ test("REGRESSION: the pipeline routes across `providers`, it does not ignore the
       schedule: { load: async () => ({ published: [{ slug: "prior", title: "Prior", target_date: "2026-08-08", keywords: ["other"] }], queue: [] }) },
       keywords: { load: async () => ({ primary: [{ keyword: "foot numbness and tingling" }], secondary: [] }) },
       imageProvider: createPexelsProvider({ fetchImpl: fixtureFetch }),
-      imageStore: createMemoryStore(),
       reporter: createDurableReporter({ sink: createInMemoryTestSink() }),
       verifier: { check: async () => ({ status: 200 }) },
-      maxGenerationAttempts: 2,
-    },
+      maxGenerationAttempts: 2
+    }
   );
 
   assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
@@ -281,7 +280,7 @@ test("REGRESSION: the pipeline routes across `providers`, it does not ignore the
 test("REGRESSION: a single `provider` still works and is the one-element route", async () => {
   const { runBlogWriterPipeline } = await import("../pipeline.js");
   const { buildRegistry } = await import("../registry.js");
-  const { createPexelsProvider, createMemoryStore } = await import("../imageProvider.js");
+  const { createPexelsProvider } = await import("../imageProvider.js");
   const { createDurableReporter, createInMemoryTestSink } = await import("../proof.js");
   const SITE = {
     siteId: "liddy2", domain: "example.com", laneKey: "lane-2",
@@ -289,7 +288,7 @@ test("REGRESSION: a single `provider` still works and is the one-element route",
     contentContext: { audience: "patients", voice: "cautious", prohibitedTerms: [] },
     imagePolicy: { required: false, provider: "pexels" },
     publication: { adapter: "github-repo-commit", workflowFile: "w", schedulePath: "s", draftDir: "d" },
-    monitorKey: "m",
+    monitorKey: "m"
   };
   const result = await runBlogWriterPipeline(
     { siteId: "liddy2", occurrence: "2026-08-22", mode: "dry-run" },
@@ -299,11 +298,10 @@ test("REGRESSION: a single `provider` still works and is the one-element route",
       schedule: { load: async () => ({ published: [{ slug: "p", title: "P", target_date: "2026-08-08", keywords: ["x"] }], queue: [] }) },
       keywords: { load: async () => ({ primary: [{ keyword: "foot numbness and tingling" }], secondary: [] }) },
       imageProvider: createPexelsProvider({ fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ photos: [] }) }) }),
-      imageStore: createMemoryStore(),
       reporter: createDurableReporter({ sink: createInMemoryTestSink() }),
       verifier: { check: async () => ({ status: 200 }) },
-      maxGenerationAttempts: 2,
-    },
+      maxGenerationAttempts: 2
+    }
   );
   assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
   assert.equal(result.proof.provenance.generationProvider, "local");

@@ -13,7 +13,7 @@ import {
   createRepoOwnedPublisher,
   serializeDraft,
   PublicationError,
-  ADAPTER_METHODS,
+  ADAPTER_METHODS
 } from "../publisher.js";
 
 const SITE = {
@@ -22,7 +22,7 @@ const SITE = {
   laneKey: "blog-writer-qirofit",
   repository: { owner: "drjliddy-max", name: "qirofit-web" },
   blogPath: "/blog",
-  publication: { schedulePath: "blog-schedule.json" },
+  publication: { schedulePath: "blog-schedule.json" }
 };
 
 const ARTICLE = {
@@ -31,7 +31,7 @@ const ARTICLE = {
   metaDescription: "A specific and useful description of the article contents for search engines.",
   body: "## One\n\nBody text.\n\n## Two\n\nMore body text.",
   keyword: "cupping therapy Los Angeles",
-  supportingKeywords: ["myofascial cupping"],
+  supportingKeywords: ["myofascial cupping"]
 };
 
 const IMAGE = {
@@ -40,7 +40,7 @@ const IMAGE = {
   provider: "pexels",
   photographer: "Jane Doe",
   filename: "what-cupping-4321.jpg",
-  buffer: Buffer.alloc(1000),
+  buffer: Buffer.alloc(1000)
 };
 
 function harness({ schedule, gitFail = null, gateFail = false, dirty = "", remote = "https://github.com/drjliddy-max/qirofit-web.git" }) {
@@ -64,7 +64,7 @@ function harness({ schedule, gitFail = null, gateFail = false, dirty = "", remot
     },
     writeFile: async (p, data) => { files.set(p, data); },
     mkdir: async () => {},
-    rm: async (p) => { files.delete(p); },
+    rm: async (p) => { files.delete(p); }
   };
   const runGate = gateFail ? async () => { throw new Error("gate:seo found 2 problems"); } : async () => {};
   return { publisher: createRepoOwnedPublisher({ git, fs, runGate, now: () => new Date("2026-08-22T09:00:00Z") }), files, log };
@@ -72,7 +72,7 @@ function harness({ schedule, gitFail = null, gateFail = false, dirty = "", remot
 
 const SCHEDULE = {
   published: [{ slug: "prior", title: "Prior", target_date: "2026-08-08" }],
-  queue: [{ slug: "planned", target_date: "2026-08-22" }],
+  queue: [{ slug: "planned", target_date: "2026-08-22" }]
 };
 
 const CALL = { site: SITE, article: ARTICLE, image: IMAGE, occurrence: "2026-08-22", idempotencyKey: "blog-writer-qirofit:2026-08-22:1" };
@@ -141,14 +141,14 @@ test("FAIL CLOSED: the wrong repository refuses to publish", async () => {
 
 test("FAIL CLOSED: two queue rows for one occurrence refuses rather than guessing", async () => {
   const { publisher } = harness({
-    schedule: { published: [], queue: [{ slug: "a", target_date: "2026-08-22" }, { slug: "b", target_date: "2026-08-22" }] },
+    schedule: { published: [], queue: [{ slug: "a", target_date: "2026-08-22" }, { slug: "b", target_date: "2026-08-22" }] }
   });
   await assert.rejects(() => publisher.publish(CALL), (e) => e.stage === "queue-ambiguous");
 });
 
 test("FAIL CLOSED: a duplicate slug refuses", async () => {
   const { publisher } = harness({
-    schedule: { published: [{ slug: ARTICLE.slug, target_date: "2026-07-25" }], queue: [] },
+    schedule: { published: [{ slug: ARTICLE.slug, target_date: "2026-07-25" }], queue: [] }
   });
   await assert.rejects(() => publisher.publish(CALL), (e) => e.stage === "duplicate-slug");
 });
@@ -166,7 +166,7 @@ test("FAIL CLOSED: a failed push reverts the local commit and reports no URL", a
   const { publisher, log } = harness({ schedule: SCHEDULE, gitFail: "push" });
   await assert.rejects(
     () => publisher.publish(CALL),
-    (e) => e.stage === "push" && /local commit reverted/.test(e.message),
+    (e) => e.stage === "push" && /local commit reverted/.test(e.message)
   );
   assert.ok(log.some((l) => l.startsWith("reset --hard HEAD~1")), "the unpushed commit must be reverted");
 });
@@ -188,7 +188,7 @@ test("FAIL CLOSED: nothing staged refuses to claim a publication", async () => {
   const fs = {
     readFile: async (p) => files.get(p),
     writeFile: async (p, d) => { files.set(p, d); },
-    mkdir: async () => {}, rm: async (p) => { files.delete(p); },
+    mkdir: async () => {}, rm: async (p) => { files.delete(p); }
   };
   const publisher = createRepoOwnedPublisher({ git, fs });
   await assert.rejects(() => publisher.publish(CALL), (e) => e.stage === "commit");
@@ -198,7 +198,7 @@ test("FAIL CLOSED: nothing staged refuses to claim a publication", async () => {
 
 test("IDEMPOTENT: an occurrence already in published is a no-op, not a second article", async () => {
   const { publisher, log } = harness({
-    schedule: { published: [{ slug: "already-there", target_date: "2026-08-22" }], queue: [] },
+    schedule: { published: [{ slug: "already-there", target_date: "2026-08-22" }], queue: [] }
   });
   const result = await publisher.publish(CALL);
   assert.equal(result.outcome, "already-published");

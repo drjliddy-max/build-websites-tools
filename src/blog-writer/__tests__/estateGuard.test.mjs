@@ -31,7 +31,7 @@ function baseFiles(overrides = {}) {
     "package.json": JSON.stringify({ devDependencies: { "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.16.0" } }),
     [`${LANE}/site.config.json`]: JSON.stringify({ configVersion: 1, laneKey: "blog-writer-qirofit" }),
     [`${LANE}/runWorkflow.mjs`]: GOOD_ENTRY,
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -46,7 +46,7 @@ test("FAIL: canonical dependency removed", () => {
   const result = checkParticipant(
     PARTICIPANT,
     reader(baseFiles({ "package.json": JSON.stringify({ devDependencies: {} }) })),
-    OPTIONS,
+    OPTIONS
   );
   assert.equal(result.ok, false);
   assert.ok(result.failures.some((f) => f.code === "missing-canonical-dependency"));
@@ -56,7 +56,7 @@ test("FAIL: an unapproved (stale) pin", () => {
   const result = checkParticipant(
     PARTICIPANT,
     reader(baseFiles({ "package.json": JSON.stringify({ devDependencies: { "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.11.3" } }) })),
-    OPTIONS,
+    OPTIONS
   );
   assert.ok(result.failures.some((f) => f.code === "unapproved-pin"));
 });
@@ -110,7 +110,7 @@ test("FAIL: an unsupported config version", () => {
   const result = checkParticipant(
     PARTICIPANT,
     reader(baseFiles({ [`${LANE}/site.config.json`]: JSON.stringify({ configVersion: 99, laneKey: "blog-writer-qirofit" }) })),
-    OPTIONS,
+    OPTIONS
   );
   assert.ok(result.failures.some((f) => f.code === "invalid-config-version"));
 });
@@ -138,7 +138,7 @@ test("every forbidden signature is load-bearing", () => {
     "local-proof-writer": "const p = { proofVersion: 1 };",
     "local-publication-orchestrator": "await stageAndCommit({ paths });",
     "local-queue-policy": "function selectQueuedPost(s, d) {}",
-    "local-validation": "validateBookDraft({ content });",
+    "local-validation": "validateBookDraft({ content });"
   };
   for (const rule of FORBIDDEN_SIGNATURES) {
     const sample = samples[rule.code];
@@ -152,11 +152,11 @@ test("every forbidden signature is load-bearing", () => {
 test("checkEstate reports per-site results and an accurate count", () => {
   const manifest = {
     approvedPins: ["v0.16.0"],
-    participants: [PARTICIPANT, { siteId: "legacy", laneKey: "blog-writer-legacy", repo: "legacy-web" }],
+    participants: [PARTICIPANT, { siteId: "legacy", laneKey: "blog-writer-legacy", repo: "legacy-web" }]
   };
   const report = checkEstate({
     manifest,
-    readerFor: (p) => (p.siteId === "qirofit" ? reader(baseFiles()) : () => null),
+    readerFor: (p) => (p.siteId === "qirofit" ? reader(baseFiles()) : () => null)
   });
   assert.equal(report.ok, false);
   assert.equal(report.participants, 2);

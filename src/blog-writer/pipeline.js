@@ -231,7 +231,6 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
       site,
       article,
       provider: deps.imageProvider,
-      store: deps.imageStore,
     });
     const imageValidation = validateImage({
       image: acquired.image,

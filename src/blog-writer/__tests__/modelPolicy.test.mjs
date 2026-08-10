@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_LOCAL_MODEL, LOCAL_FALLBACK_ORDER, MAX_ATTEMPTS_PER_MODEL,
-  HOSTED_FALLBACK_ORDER, EXCLUDED_MODELS, resolveModelRoute, buildProviderRoute,
+  HOSTED_FALLBACK_ORDER, EXCLUDED_MODELS, resolveModelRoute, buildProviderRoute
 } from "../modelPolicy.js";
 
 const SITE = { siteId: "liddy" };
@@ -52,7 +52,7 @@ test("a site preference is additive: it cannot remove the safety fallbacks", () 
 test("a site cannot prefer an excluded model", () => {
   assert.throws(
     () => resolveModelRoute({ siteId: "x", generationPolicy: { preferredModel: "gpt-oss:20b" } }),
-    /excluded \(returns an empty response/,
+    /excluded \(returns an empty response/
   );
 });
 
@@ -65,7 +65,7 @@ test("exclusions carry a stated reason so they cannot be silently reintroduced",
 test("buildProviderRoute produces local-then-hosted providers in order", () => {
   const providers = buildProviderRoute(SITE, {
     makeLocal: ({ model }) => ({ id: "local", model }),
-    makeHosted: (spec) => ({ id: "hosted", model: spec.model }),
+    makeHosted: (spec) => ({ id: "hosted", model: spec.model })
   });
   assert.deepEqual(providers.map((p) => `${p.id}:${p.model}`), [
     "local:qwen3:14b",
