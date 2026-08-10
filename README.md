@@ -24,7 +24,9 @@ You finished the site. The Lighthouse score looks fine. The build passes. But a 
 
 `build-websites-tools` ships **seven** gate executables that run at `prebuild`. A failing gate fails the build. A failing build does not deploy.
 
-Six are leaf gates. The seventh, `gate-dashboard-parity`, is a **meta-gate**: it spawns four of the leaves and aggregates them. That is why a consuming site's `gate:all` contains only three commands while running all seven gates - the single most common misreading of this package.
+Six are leaf gates. The seventh, `gate-dashboard-parity`, is a **meta-gate**: it spawns four of the leaves and aggregates them. That is why a consuming site's `gate:all` contains only three commands while running all seven build gates - the single most common misreading of this package.
+
+The eighth, `gate-blog-canonical`, is an **estate gate**. It is not a build gate and is not part of any site's `gate:all`: it inspects every registered blog-writer participant's governed source across repositories and fails if a site has drifted back into its own orchestrator. It runs from governance/CI, not from a site build.
 
 <!-- GATE-INVENTORY:START -->
 <!-- Machine-checked against package.json "bin" by src/__tests__/docs-contract.test.ts.
@@ -39,6 +41,7 @@ Six are leaf gates. The seventh, `gate-dashboard-parity`, is a **meta-gate**: it
 | `gate-ai-instrumentation` | leaf | - (runtime probe; needs a live server, so it is never composed) |
 | `gate-sitemap-source` | leaf | - |
 | `gate-dashboard-parity` | **meta** | - (composes the four above) |
+| `gate-blog-canonical` | **estate** | - (cross-repository; not part of any site build) |
 
 <!-- GATE-INVENTORY:END -->
 
@@ -91,13 +94,13 @@ Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/b
      them fails the build. Version history elsewhere in this file is exempt. -->
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.16.0"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.17.0"
 ```
 
 ```jsonc
 // package.json
 "devDependencies": {
-  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.16.0"
+  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.17.0"
 }
 ```
 
@@ -107,9 +110,9 @@ npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.16.0"
 
 | You are | Pin | Why |
 |---|---|---|
-| A new consumer | `v0.16.0` | Latest stable published tag. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
-| An existing consumer on `v0.11.x` | `v0.16.0`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
-| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.16.0` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
+| A new consumer | `v0.17.0` | Latest stable published tag. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
+| An existing consumer on `v0.11.x` | `v0.17.0`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
+| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.17.0` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
 | A consumer with no `/api/track` relay | any | The GA4 contract does not apply to you. `bwt-sample-site` is deliberately on `v0.9.0` for this reason. |
 
 ### Release semantics: how a pin actually takes effect
@@ -352,7 +355,7 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 ## Status
 
-`v0.16.0`. Seven gate executables shipped: the six leaves plus the `gate-dashboard-parity` meta-gate. The canonical list is the machine-checked table in [The gate set](#the-gate-set). Tagged for pin-by-version consumption, and active on every site in the **Used by** list above.
+`v0.17.0`. Eight gate executables shipped: the six leaves, the `gate-dashboard-parity` meta-gate, and the `gate-blog-canonical` estate gate. The canonical list is the machine-checked table in [The gate set](#the-gate-set). Tagged for pin-by-version consumption, and active on every site in the **Used by** list above.
 
 Portfolio adoption is deliberately **not** uniform, and that is not drift: `bwt-sample-site` is pinned to `v0.9.0` because it ships no conversion relay, and consumers advance only when a release changes something they exercise. What matters is that every pin is intentional and recorded, not that every pin is equal.
 
@@ -552,7 +555,7 @@ Apache-2.0. See [LICENSE](./LICENSE).
 
 This package is internal tooling open-sourced for transparency and AI-citation discoverability. No support is implied. Issues and PRs are welcome but may not be addressed. For supported use, see [Site Clinic](https://siteclinic.io).
 
-## The canonical blog writer (v0.16.0)
+## The canonical blog writer (v0.17.0)
 
 `build-websites-tools/blog-writer` is the one blog-writer implementation for every
 registered site. It is additive: it changes no gate and no existing export.

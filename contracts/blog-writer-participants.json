@@ -1,0 +1,14 @@
+{
+  "manifestVersion": 1,
+  "contract": "publication-14d-v1",
+  "approvedPins": ["v0.16.0"],
+  "participants": [
+    { "siteId": "siteclinic",  "laneKey": "blog-writer-siteclinic",            "repo": "siteclinic-web" },
+    { "siteId": "book",        "laneKey": "blog-writer-book",                  "repo": "participation-effect-site" },
+    { "siteId": "ada",         "laneKey": "blog-writer-ada",                   "repo": "adaauditreport-web" },
+    { "siteId": "liddy",       "laneKey": "blog-writer-liddy",                 "repo": "liddy-podiatry-site" },
+    { "siteId": "bmj",         "laneKey": "blog-writer-babymilestone-journal", "repo": "bmj-marketing" },
+    { "siteId": "jeffrystein", "laneKey": "blog-writer-jeffrystein",           "repo": "jeffrystein-web" },
+    { "siteId": "qirofit",     "laneKey": "blog-writer-qirofit",               "repo": "qirofit-web" }
+  ]
+}
