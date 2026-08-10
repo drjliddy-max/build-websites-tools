@@ -22,7 +22,54 @@
  * believing it has a writer when it does not.
  */
 
-import { slugify } from "./validators.js";
+import { slugify, MIN_H2_COUNT, BODY_MIN_WORDS } from "./validators.js";
+
+/**
+ * The response contract.
+ *
+ * `body` used to be a free string with the structure requested in prose. Models
+ * complied inconsistently: observed runs returned well-formed JSON, clean
+ * endings, and h2=0, which then failed `structure` in the validator. Asking
+ * more politely does not fix a contract that cannot express the requirement.
+ *
+ * Sections are now first-class. The schema requires at least MIN_H2_COUNT of
+ * them, each with a heading and prose, and the markdown body is ASSEMBLED here
+ * rather than transcribed from the model. Heading count and non-empty sections
+ * therefore cannot be violated by a compliant response, because the generator
+ * writes the "## " markers itself.
+ */
+export const ARTICLE_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    metaDescription: { type: "string" },
+    introduction: { type: "string" },
+    sections: {
+      type: "array",
+      minItems: MIN_H2_COUNT,
+      items: {
+        type: "object",
+        properties: {
+          heading: { type: "string" },
+          body: { type: "string" },
+        },
+        required: ["heading", "body"],
+      },
+    },
+    imageQuery: { type: "string" },
+  },
+  required: ["title", "metaDescription", "introduction", "sections", "imageQuery"],
+};
+
+/** Assemble markdown from the structured response. The generator owns the H2s. */
+export function assembleBody({ introduction, sections }) {
+  const parts = [introduction.trim()];
+  for (const section of sections) {
+    parts.push(`## ${section.heading.trim()}`);
+    parts.push(section.body.trim());
+  }
+  return parts.filter(Boolean).join("\n\n");
+}
 
 export class GenerationError extends Error {
   constructor(message, detail) {
@@ -70,7 +117,14 @@ export function buildPrompt({ site, keyword, supportingKeywords = [], occurrence
       : null,
     "",
     "Return ONE JSON object and nothing else, with exactly these keys:",
-    '{"title":"","metaDescription":"","body":"","imageQuery":""}',
+    '{"title":"","metaDescription":"","introduction":"","sections":[{"heading":"","body":""}],"imageQuery":""}',
+    "",
+    `sections: at least ${constraints.minH2Count} entries. Each needs a distinct heading and`,
+    "  several sentences of real prose. Do NOT write '## ' yourself: headings come from the",
+    "  heading field and the markdown is assembled for you.",
+    "introduction: the opening paragraphs, before the first heading.",
+    `The introduction and all section bodies together must total ${constraints.bodyMinWords}-${constraints.bodyMaxWords} words,`,
+    `so aim for roughly ${Math.ceil(constraints.bodyMinWords / constraints.minH2Count)}+ words per section.`,
     "imageQuery: 3-8 plain words describing a photograph to accompany the article.",
     "Do not wrap the JSON in Markdown fences.",
   ]
@@ -86,29 +140,64 @@ export function buildPrompt({ site, keyword, supportingKeywords = [], occurrence
  * closed. It is NOT a fallback: a repair that still fails validation publishes
  * nothing.
  */
+export const CORRECTION_INSTRUCTIONS = {
+  "body-too-short": (issue) =>
+    `LENGTH: the article was ${issue.detail} words, below the ${BODY_MIN_WORDS} minimum. ` +
+    `Add substantive material to the EXISTING sections or add another section. Do not pad with restatement.`,
+  "body-too-long": () => "LENGTH: the article is too long. Tighten, do not delete a whole section.",
+  structure: (issue) =>
+    `STRUCTURE: only ${issue.detail ?? "too few"} sections were usable. Return at least ` +
+    `${MIN_H2_COUNT} entries in "sections", each with a distinct heading and real prose.`,
+  "truncated-body": () => "TERMINATION: the last section stopped mid-sentence. Finish it.",
+  "topic-drift": (issue) =>
+    `TOPIC: the article did not cover its assigned keyword "${issue.detail}". Rewrite so the ` +
+    `keyword is the actual subject, used naturally in the title and opening paragraph.`,
+  "prohibited-term": (issue) =>
+    `FORBIDDEN WORDING: "${issue.detail}" is not permitted on this site. Express the idea ` +
+    `differently. Do NOT simply delete the word and leave a sentence that no longer makes sense.`,
+  "title-length": (issue) =>
+    `TITLE: ${issue.detail} characters. Rewrite it to fit the stated range, no trailing period.`,
+  "meta-length": (issue) =>
+    `META DESCRIPTION: ${issue.detail} characters. Rewrite it to fit the stated range.`,
+  "duplicate-title": () => "DUPLICATE: that title is already published. Choose a different angle.",
+  "duplicate-slug": () => "DUPLICATE: that slug is already published. Choose a different angle.",
+  "placeholder-residue": () => "PLACEHOLDER: remove template or model residue and write the real text.",
+};
+
+/**
+ * Re-prompt after a deterministic validation failure.
+ *
+ * Each failure code maps to a TYPED correction naming the measured quantity, so
+ * the retry targets the condition that actually failed instead of re-rolling the
+ * same request. Raw validator objects are never handed to the model.
+ *
+ * Bounded: the pipeline caps attempts and then fails closed. A correction is
+ * never permission to relax a requirement.
+ */
 export function buildRepairPrompt({ basePrompt, previous, issues }) {
+  const corrections = issues.map((issue) => {
+    const build = CORRECTION_INSTRUCTIONS[issue.code];
+    return `- ${build ? build(issue) : issue.message}`;
+  });
   return [
     basePrompt,
     "",
-    "── YOUR PREVIOUS ATTEMPT WAS REJECTED ──",
+    "YOUR PREVIOUS ATTEMPT WAS REJECTED. Fix exactly these problems:",
+    ...corrections,
     "",
-    "It broke these rules:",
-    ...issues.map((i) => `- [${i.code}] ${i.message}`),
-    "",
-    "Your previous output was:",
+    "Keep everything that was already acceptable. Previous attempt, for reference:",
     JSON.stringify(
       {
         title: previous.title,
         metaDescription: previous.metaDescription,
         imageQuery: previous.imageQuery,
-        body: `${previous.body.slice(0, 600)}…`,
+        bodyExcerpt: `${previous.body.slice(0, 500)}...`,
       },
       null,
       1,
     ),
     "",
-    "Produce a corrected version that fixes every listed rule and keeps everything",
-    "else that was already acceptable. Return the same JSON object shape.",
+    "Return the same JSON object shape.",
   ].join("\n");
 }
 
@@ -133,9 +222,20 @@ export function parseModelJson(raw) {
   } catch (error) {
     throw new GenerationError(`Model response was not valid JSON: ${error.message}`, raw.slice(0, 400));
   }
-  for (const key of ["title", "metaDescription", "body", "imageQuery"]) {
+  for (const key of ["title", "metaDescription", "introduction", "imageQuery"]) {
     if (typeof parsed[key] !== "string") {
       throw new GenerationError(`Model response is missing "${key}".`, Object.keys(parsed).join(","));
+    }
+  }
+  if (!Array.isArray(parsed.sections) || parsed.sections.length === 0) {
+    throw new GenerationError("Model response has no sections.", Object.keys(parsed).join(","));
+  }
+  for (const [index, section] of parsed.sections.entries()) {
+    if (typeof section?.heading !== "string" || section.heading.trim() === "") {
+      throw new GenerationError(`Section ${index + 1} has no heading.`);
+    }
+    if (typeof section?.body !== "string" || section.body.trim() === "") {
+      throw new GenerationError(`Section ${index + 1} ("${section.heading}") has no body.`);
     }
   }
   return parsed;
@@ -149,7 +249,7 @@ export function createLocalProvider({ model = "phi4:14b", endpoint = "http://127
   return {
     id: "local",
     model,
-    async complete(prompt, { timeoutMs = 600_000 } = {}) {
+    async complete(prompt, { timeoutMs = 600_000, schema = ARTICLE_RESPONSE_SCHEMA } = {}) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -164,16 +264,10 @@ export function createLocalProvider({ model = "phi4:14b", endpoint = "http://127
             // remember four key names across a long prompt loses a field often
             // enough to matter; constraining decoding makes the shape mechanical
             // instead of hoped-for. Validation still runs afterwards.
-            format: {
-              type: "object",
-              properties: {
-                title: { type: "string" },
-                metaDescription: { type: "string" },
-                body: { type: "string" },
-                imageQuery: { type: "string" },
-              },
-              required: ["title", "metaDescription", "body", "imageQuery"],
-            },
+            // Constrained decoding against the article contract. The section
+            // array is what makes heading structure mechanical rather than
+            // hoped-for.
+            format: schema,
             options: { temperature: 0.7, num_predict: 4096 },
           }),
           signal: controller.signal,
@@ -322,7 +416,7 @@ export async function generateArticle({
       title: parsed.title.trim(),
       slug: slugify(parsed.title),
       metaDescription: parsed.metaDescription.trim(),
-      body: parsed.body.trim(),
+      body: assembleBody(parsed),
       imageQuery: parsed.imageQuery.trim(),
       keyword,
       supportingKeywords,

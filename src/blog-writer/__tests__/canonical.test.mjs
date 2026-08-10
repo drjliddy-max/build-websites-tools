@@ -82,7 +82,28 @@ const GOOD_ARTICLE = {
   supportingKeywords: [],
 };
 
+const MIN_H2_COUNT_FOR_TEST = 3;
 const NO_HISTORY = { slugs: [], titles: [] };
+
+/** Build a response in the structured article contract the generator now requires. */
+function modelResponse({ title, metaDescription, imageQuery, sectionBody, sections = 3 }) {
+  return JSON.stringify({
+    title,
+    metaDescription,
+    introduction: sectionBody,
+    sections: Array.from({ length: sections }, (_, i) => ({
+      heading: `Section heading ${i + 1}`,
+      body: sectionBody,
+    })),
+    imageQuery,
+  });
+}
+
+const SECTION_PROSE =
+  "This paragraph discusses cupping therapy for athletes in specific, practical terms, " +
+  "covering myofascial technique, load management, and how manual work fits alongside " +
+  "progressive strength training across a season of running and cycling. ";
+
 
 // ── registry ───────────────────────────────────────────────────────────────
 
@@ -280,7 +301,7 @@ test("generator: the prompt carries every site constraint", () => {
 });
 
 test("generator: model JSON is extracted from fenced or noisy output", () => {
-  const payload = '{"title":"t","metaDescription":"m","body":"b","imageQuery":"q"}';
+  const payload = '{"title":"t","metaDescription":"m","introduction":"i","sections":[{"heading":"h","body":"b"}],"imageQuery":"q"}';
   assert.equal(parseModelJson(payload).title, "t");
   assert.equal(parseModelJson("```json\n" + payload + "\n```").title, "t");
   assert.equal(parseModelJson("Here you go:\n" + payload + "\nHope that helps!").title, "t");
@@ -290,6 +311,8 @@ test("generator: malformed or empty model output fails closed", () => {
   assert.throws(() => parseModelJson(""), GenerationError);
   assert.throws(() => parseModelJson("I cannot help with that."), GenerationError);
   assert.throws(() => parseModelJson('{"title":"only"}'), /metaDescription/);
+  assert.throws(() => parseModelJson('{"title":"t","metaDescription":"m","introduction":"i","imageQuery":"q"}'), /no sections/);
+  assert.throws(() => parseModelJson('{"title":"t","metaDescription":"m","introduction":"i","imageQuery":"q","sections":[{"heading":"h","body":"  "}]}'), /has no body/);
 });
 
 test("generator: output is never self-certified, validation runs separately", async () => {
@@ -300,7 +323,8 @@ test("generator: output is never self-certified, validation runs separately", as
       JSON.stringify({
         title: "A guaranteed cure for every athlete injury",
         metaDescription: "short",
-        body: "tiny",
+        introduction: "tiny",
+        sections: [{ heading: "One", body: "tiny" }, { heading: "Two", body: "tiny" }, { heading: "Three", body: "tiny" }],
         imageQuery: "x",
       }),
   };
@@ -496,12 +520,7 @@ const ANCHORED_SCHEDULE = {
 
 test("pipeline: dry-run runs every stage and commits nothing", async () => {
   const deps = pipelineDeps({
-    modelOutput: JSON.stringify({
-      title: GOOD_ARTICLE.title,
-      metaDescription: GOOD_ARTICLE.metaDescription,
-      body: GOOD_ARTICLE.body,
-      imageQuery: GOOD_ARTICLE.imageQuery,
-    }),
+    modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
     schedule: ANCHORED_SCHEDULE,
   });
   const result = await runBlogWriterPipeline(
@@ -542,11 +561,11 @@ test("pipeline: an unregistered site cannot run", async () => {
 test("pipeline: invalid generated content fails closed with no publication", async () => {
   let published = false;
   const deps = pipelineDeps({
-    modelOutput: JSON.stringify({
+    modelOutput: modelResponse({
       title: GOOD_ARTICLE.title,
       metaDescription: GOOD_ARTICLE.metaDescription,
-      body: `${GOOD_ARTICLE.body}\n\nThis will cure your injury.`,
       imageQuery: "x",
+      sectionBody: `${SECTION_PROSE.repeat(6)} This will cure your injury.`,
     }),
     schedule: ANCHORED_SCHEDULE,
   });
@@ -562,12 +581,7 @@ test("pipeline: invalid generated content fails closed with no publication", asy
 
 test("PART 11 PROOF: publish mode requires live verification of article AND image", async () => {
   const deps = pipelineDeps({
-    modelOutput: JSON.stringify({
-      title: GOOD_ARTICLE.title,
-      metaDescription: GOOD_ARTICLE.metaDescription,
-      body: GOOD_ARTICLE.body,
-      imageQuery: GOOD_ARTICLE.imageQuery,
-    }),
+    modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
     schedule: ANCHORED_SCHEDULE,
   });
   const result = await runBlogWriterPipeline(
@@ -584,12 +598,7 @@ test("PART 11 PROOF: publish mode requires live verification of article AND imag
 
 test("pipeline: a 404 article aborts before COMPLETE", async () => {
   const deps = pipelineDeps({
-    modelOutput: JSON.stringify({
-      title: GOOD_ARTICLE.title,
-      metaDescription: GOOD_ARTICLE.metaDescription,
-      body: GOOD_ARTICLE.body,
-      imageQuery: GOOD_ARTICLE.imageQuery,
-    }),
+    modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
     schedule: ANCHORED_SCHEDULE,
   });
   deps.verifier = { check: async () => ({ status: 404 }) };
@@ -603,12 +612,7 @@ test("pipeline: a 404 article aborts before COMPLETE", async () => {
 
 test("PART 11 PROOF: a re-run does not create a second article", async () => {
   const sink = createInMemoryTestSink();
-  const output = JSON.stringify({
-    title: GOOD_ARTICLE.title,
-    metaDescription: GOOD_ARTICLE.metaDescription,
-    body: GOOD_ARTICLE.body,
-    imageQuery: GOOD_ARTICLE.imageQuery,
-  });
+  const output = modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) });
   const first = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" },
     pipelineDeps({ modelOutput: output, schedule: ANCHORED_SCHEDULE, sink }),
@@ -657,12 +661,7 @@ test("pipeline: an exhausted supply with no replenishment fails rather than repe
 
 test("pipeline: an exhausted primary pool is rescued by replenishment", async () => {
   const deps = pipelineDeps({
-    modelOutput: JSON.stringify({
-      title: GOOD_ARTICLE.title,
-      metaDescription: GOOD_ARTICLE.metaDescription,
-      body: GOOD_ARTICLE.body,
-      imageQuery: GOOD_ARTICLE.imageQuery,
-    }),
+    modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
     schedule: {
       published: [{ slug: "prior", title: "A prior article", target_date: "2026-08-08", keywords: ["cupping therapy Los Angeles"] }],
       queue: [],
@@ -680,4 +679,103 @@ test("pipeline: an exhausted primary pool is rescued by replenishment", async ()
   );
   assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
   assert.equal(result.proof.provenance.topicProvenance, "REPLENISHED_TOPIC");
+});
+
+// ── REGRESSION: the prompt/body structure contract ─────────────────────────
+// Observed on real lanes with granite3.3:8b: well-formed JSON, clean ending,
+// raw output far below any token ceiling, and h2=0. The body was a free string
+// with structure requested in prose, so a compliant response could still be
+// structurally invalid. Sections are now schema-level.
+
+test("REGRESSION: a body with no H2 headings fails validation", () => {
+  const result = validateArticle({
+    article: { ...GOOD_ARTICLE, body: SECTION_PROSE.repeat(20) },
+    site: SITE,
+    history: NO_HISTORY,
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.some((i) => i.code === "structure"));
+});
+
+test("REGRESSION: headings with empty sections are refused at parse time", async () => {
+  const { parseModelJson } = await import("../generator.js");
+  assert.throws(
+    () => parseModelJson(JSON.stringify({
+      title: "t", metaDescription: "m", introduction: "i", imageQuery: "q",
+      sections: [{ heading: "Real heading", body: "" }],
+    })),
+    /has no body/,
+  );
+});
+
+test("REGRESSION: the generator assembles H2 markers itself", async () => {
+  const { assembleBody } = await import("../generator.js");
+  const body = assembleBody({
+    introduction: "Opening paragraph.",
+    sections: [
+      { heading: "First", body: "Alpha." },
+      { heading: "Second", body: "Beta." },
+      { heading: "Third", body: "Gamma." },
+    ],
+  });
+  assert.equal((body.match(/^##\s+\S/gm) || []).length, 3);
+  assert.match(body, /^Opening paragraph\./);
+  assert.ok(!body.includes("####"));
+});
+
+test("REGRESSION: the schema requires at least the validator's H2 count", async () => {
+  const { ARTICLE_RESPONSE_SCHEMA } = await import("../generator.js");
+  assert.equal(ARTICLE_RESPONSE_SCHEMA.properties.sections.minItems, MIN_H2_COUNT_FOR_TEST);
+  for (const key of ["title", "metaDescription", "introduction", "sections", "imageQuery"]) {
+    assert.ok(ARTICLE_RESPONSE_SCHEMA.required.includes(key), `${key} must be required`);
+  }
+});
+
+// ── retry feedback must target the failed condition ────────────────────────
+
+test("retry: a length failure produces a length correction naming the measured count", async () => {
+  const { buildRepairPrompt } = await import("../generator.js");
+  const prompt = buildRepairPrompt({
+    basePrompt: "BASE",
+    previous: GOOD_ARTICLE,
+    issues: [{ code: "body-too-short", message: "x", detail: 265 }],
+  });
+  assert.match(prompt, /LENGTH: the article was 265 words/);
+  assert.match(prompt, /Do not pad with restatement/);
+});
+
+test("retry: a structure failure produces a section-count correction", async () => {
+  const { buildRepairPrompt } = await import("../generator.js");
+  const prompt = buildRepairPrompt({
+    basePrompt: "BASE", previous: GOOD_ARTICLE,
+    issues: [{ code: "structure", message: "x", detail: 0 }],
+  });
+  assert.match(prompt, /STRUCTURE: only 0 sections were usable/);
+});
+
+test("retry: topic drift reinforces the resolved topic", async () => {
+  const { buildRepairPrompt } = await import("../generator.js");
+  const prompt = buildRepairPrompt({
+    basePrompt: "BASE", previous: GOOD_ARTICLE,
+    issues: [{ code: "topic-drift", message: "x", detail: "cupping therapy Los Angeles" }],
+  });
+  assert.match(prompt, /TOPIC: .*"cupping therapy Los Angeles"/);
+});
+
+test("retry: a prohibited term is not fixable by deletion alone", async () => {
+  const { buildRepairPrompt } = await import("../generator.js");
+  const prompt = buildRepairPrompt({
+    basePrompt: "BASE", previous: GOOD_ARTICLE,
+    issues: [{ code: "prohibited-term", message: "x", detail: "cure" }],
+  });
+  assert.match(prompt, /Do NOT simply delete the word/);
+});
+
+test("retry: raw validator objects are never handed to the model", async () => {
+  const { buildRepairPrompt } = await import("../generator.js");
+  const prompt = buildRepairPrompt({
+    basePrompt: "BASE", previous: GOOD_ARTICLE,
+    issues: [{ code: "body-too-short", message: "internal detail", detail: 100 }],
+  });
+  assert.ok(!prompt.includes('"code"'), "no serialized issue objects");
 });

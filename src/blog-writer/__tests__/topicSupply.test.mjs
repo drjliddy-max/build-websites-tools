@@ -159,16 +159,23 @@ function bodyOf(words) {
   return ["## One", sentence.repeat(Math.ceil(words / 3 / 11)), "## Two", sentence.repeat(Math.ceil(words / 3 / 11)), "## Three", sentence.repeat(Math.ceil(words / 3 / 11))].join("\n\n");
 }
 
+const PROSE = "This paragraph explains foot and ankle care in specific practical terms for patients. ";
 const GOOD = JSON.stringify({
   title: "Foot numbness and tingling, what to check first",
   metaDescription: "Numbness in the foot has several common causes. Here is how to tell them apart and when it is worth booking an appointment.",
-  body: bodyOf(450),
+  introduction: PROSE.repeat(12),
+  sections: [
+    { heading: "Common causes", body: PROSE.repeat(12) },
+    { heading: "What to check first", body: PROSE.repeat(12) },
+    { heading: "When to book", body: PROSE.repeat(12) },
+  ],
   imageQuery: "clinical foot examination",
 });
 const SHORT = JSON.stringify({
   title: "Foot numbness and tingling, what to check first",
   metaDescription: "Numbness in the foot has several common causes. Here is how to tell them apart and when it is worth booking an appointment.",
-  body: "## One\n\nToo short.",
+  introduction: "Too short.",
+  sections: [{ heading: "One", body: "Too short." }, { heading: "Two", body: "x." }, { heading: "Three", body: "y." }],
   imageQuery: "x",
 });
 
