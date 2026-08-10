@@ -827,3 +827,52 @@ test("a body meeting length and structure passes unchanged validators", () => {
   assert.equal(result.ok, true, JSON.stringify(result.issues));
   assert.ok(long.trim().split(/\s+/).length >= 400);
 });
+
+// ── credential preflight: fail closed BEFORE spending a model call ─────────
+// The production publish workflows referenced no secrets at all, so a missing
+// Pexels key was the failure every lane would have hit. It must be named, and
+// it must stop the run before generation, not after.
+
+test("PREFLIGHT: a required Pexels policy with no credential fails closed", async () => {
+  const { preflightImageCredentials } = await import("../imageProvider.js");
+  const result = preflightImageCredentials(SITE, {});
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "MISSING_PEXELS_CREDENTIAL");
+  assert.match(result.reason, /must pass it through as a secret reference/);
+});
+
+test("PREFLIGHT: presence is enough; the value is never read or returned", async () => {
+  const { preflightImageCredentials } = await import("../imageProvider.js");
+  const result = preflightImageCredentials(SITE, { PEXELS_API_KEY: "super-secret-value" });
+  assert.equal(result.ok, true);
+  assert.equal(JSON.stringify(result).includes("super-secret-value"), false);
+});
+
+test("PREFLIGHT: a declared repo-hosted policy needs no Pexels credential", async () => {
+  const { preflightImageCredentials } = await import("../imageProvider.js");
+  const optOut = { ...SITE, imagePolicy: { required: true, provider: "repo-hosted", repoAsset: "/photos/x.jpg", optOutReason: "practice photography" } };
+  assert.equal(preflightImageCredentials(optOut, {}).ok, true);
+});
+
+test("PREFLIGHT: the pipeline stops before generation, so no model call is spent", async () => {
+  let generatorCalled = false;
+  const deps = pipelineDeps({ modelOutput: "{}", schedule: ANCHORED_SCHEDULE });
+  deps.env = {};                                   // no PEXELS_API_KEY
+  deps.provider = { id: "local", model: "m", complete: async () => { generatorCalled = true; return "{}"; } };
+  const result = await runBlogWriterPipeline(
+    { siteId: "qirofit", occurrence: "2026-08-22", mode: "dry-run" },
+    deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.proof.failure.stage, "preflight-credentials");
+  assert.equal(generatorCalled, false, "generation must not run without an image credential");
+});
+
+test("PREFLIGHT: no image means the publisher never runs", async () => {
+  let published = false;
+  const deps = pipelineDeps({ modelOutput: "{}", schedule: ANCHORED_SCHEDULE });
+  deps.env = {};
+  deps.publisher = { publish: async () => { published = true; return { commitSha: "x" }; } };
+  await runBlogWriterPipeline({ siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" }, deps);
+  assert.equal(published, false);
+});

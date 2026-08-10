@@ -24,7 +24,7 @@ import { DISALLOWED_IMAGE_PATHS } from "./registry.js";
 import { resolveTopic, TopicSupplyError } from "./topicSupply.js";
 import { createJobRunsReporter } from "./jobRunsAdapter.js";
 import { generateArticle, generateWithProviderRouting } from "./generator.js";
-import { acquireImage } from "./imageProvider.js";
+import { acquireImage, preflightImageCredentials } from "./imageProvider.js";
 import {
   assertTransition,
   buildProof,
@@ -167,6 +167,16 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
     }
     state = assertTransition(state, "READY");
     record("idempotency", true, "no prior publication for this occurrence");
+
+    // Fail closed on a missing image credential BEFORE spending a model call.
+    // The alternative is an opaque authorization error after generation, which
+    // is what every lane would have hit: the publish workflows passed no
+    // secrets at all.
+    const credentials = preflightImageCredentials(site, deps.env ?? process.env);
+    if (!credentials.ok) {
+      throw new PipelineError("preflight-credentials", credentials.reason, credentials.code);
+    }
+    record("preflight-credentials", true, credentials.provider ?? "not-required");
 
     // ── 5. resolve keyword/topic ──────────────────────────────────────────
     const history = {
