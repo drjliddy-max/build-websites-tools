@@ -177,6 +177,11 @@ export async function acquireImage({ site, article, provider, store, minWidth = 
   return {
     status: "acquired",
     image: {
+      // The BYTES are the publishable artifact. publisher.js writes
+      // image.buffer into the repo and stages it; without this the publisher
+      // silently skipped image placement, so a live Pexels 200 proved nothing
+      // about publication readiness.
+      buffer,
       url: stored.publicPath,
       alt: alt && alt.length >= 15 ? alt : `${article.title}, related photograph`,
       provider: "pexels",

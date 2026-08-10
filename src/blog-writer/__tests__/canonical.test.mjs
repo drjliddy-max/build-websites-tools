@@ -876,3 +876,76 @@ test("PREFLIGHT: no image means the publisher never runs", async () => {
   await runBlogWriterPipeline({ siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" }, deps);
   assert.equal(published, false);
 });
+
+// ── PRODUCTION COMPOSITION REACHABILITY ────────────────────────────────────
+// This programme repeatedly shipped code that was implemented, exported and
+// wired in a workflow, yet unreachable at runtime: a pipeline whose publisher
+// had no implementation (v0.13.0), routing the pipeline never called (v0.15.0),
+// a dry-run default the workflow never overrode, and an image whose bytes were
+// discarded before the publisher could stage them. Each was invisible to unit
+// tests because each component passed on its own.
+//
+// These assert the SEAMS, not the components.
+
+test("REACHABILITY: acquired images carry publishable bytes, not just metadata", async () => {
+  process.env.PEXELS_API_KEY = "fixture-key";
+  const { acquireImage, createPexelsProvider, createMemoryStore } = await import("../imageProvider.js");
+  const result = await acquireImage({
+    site: SITE, article: GOOD_ARTICLE,
+    provider: createPexelsProvider({ fetchImpl: fixtureFetch() }),
+    store: createMemoryStore(),
+  });
+  assert.ok(Buffer.isBuffer(result.image.buffer), "publisher.js stages image.buffer; it must exist");
+  assert.equal(result.image.buffer.length, result.image.byteLength);
+  assert.ok(result.image.filename, "publisher.js derives the repo path from image.filename");
+  delete process.env.PEXELS_API_KEY;
+});
+
+test("REACHABILITY: the publisher's image contract matches what acquisition returns", async () => {
+  process.env.PEXELS_API_KEY = "fixture-key";
+  const { acquireImage, createPexelsProvider, createMemoryStore } = await import("../imageProvider.js");
+  const { serializeDraft } = await import("../publisher.js");
+  const acquired = await acquireImage({
+    site: SITE, article: GOOD_ARTICLE,
+    provider: createPexelsProvider({ fetchImpl: fixtureFetch() }),
+    store: createMemoryStore(),
+  });
+  // publisher.js:201 gates image placement on exactly these two fields
+  assert.ok(acquired.image.buffer && acquired.image.filename,
+    "publisher gates on (image.buffer && image.filename); acquisition must satisfy both");
+  const draft = serializeDraft({ article: GOOD_ARTICLE, image: acquired.image, occurrence: "2026-08-22" });
+  assert.match(draft, /image_url: "\/photos\//, "the draft must reference the stored public path");
+  delete process.env.PEXELS_API_KEY;
+});
+
+test("REACHABILITY: publish mode refuses a metadata-only image", async () => {
+  let published = false;
+  const deps = pipelineDeps({
+    modelOutput: modelResponse({
+      title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription,
+      imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6),
+    }),
+    schedule: ANCHORED_SCHEDULE,
+  });
+  // a provider that returns metadata but no bytes: the exact defect
+  deps.imageProvider = {
+    id: "pexels", licence: "Pexels License",
+    search: async () => [{ id: 1, width: 3000, alt: "a photograph of something", src: { large2x: "https://x/y.jpg" } }],
+    download: async () => ({ buffer: Buffer.alloc(0), contentType: "image/jpeg" }),
+  };
+  deps.imageStore = { put: async ({ filename }) => ({ publicPath: `/photos/${filename}`, bytes: 0 }) };
+  deps.publisher = { publish: async () => { published = true; return { commitSha: "x" }; } };
+  const result = await runBlogWriterPipeline(
+    { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" }, deps,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(published, false, "no publication without publishable bytes");
+});
+
+test("REACHABILITY: no dead job_runs seam remains in the pipeline", async () => {
+  const pipeline = await import("../pipeline.js");
+  const index = await import("../index.js");
+  assert.equal(typeof index.createJobRunsReporter, "undefined",
+    "the direct-writer seam was wrong: site-monitor/jobExecutor owns job_runs");
+  assert.equal(typeof pipeline.reportToAuthority, "undefined");
+});

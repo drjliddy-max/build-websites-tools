@@ -22,7 +22,6 @@ import {
 } from "./cadence.js";
 import { DISALLOWED_IMAGE_PATHS } from "./registry.js";
 import { resolveTopic, TopicSupplyError } from "./topicSupply.js";
-import { createJobRunsReporter } from "./jobRunsAdapter.js";
 import { generateArticle, generateWithProviderRouting } from "./generator.js";
 import { acquireImage, preflightImageCredentials } from "./imageProvider.js";
 import {
@@ -54,21 +53,6 @@ const CONSTRAINTS = {
   bodyMaxWords: BODY_MAX_WORDS,
   minH2Count: MIN_H2_COUNT,
 };
-
-/**
- * Report to the authoritative job_runs ledger when a Site Monitor store is
- * supplied. The file sink stays as forensic evidence; this is the completion
- * authority. Absent a store the pipeline still runs, so a consumer without
- * database access degrades to file-only rather than failing.
- */
-async function reportToAuthority(deps, proof) {
-  if (!deps.jobRunsStore) return null;
-  const reporter = createJobRunsReporter({
-    store: deps.jobRunsStore,
-    bwtRelease: deps.bwtRelease,
-  });
-  return reporter.report(proof);
-}
 
 export class PipelineError extends Error {
   constructor(stage, message, detail) {
@@ -120,7 +104,6 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
       completedAt: new Date().toISOString(),
     });
     await deps.reporter.report(proof);
-    await reportToAuthority(deps, proof);
     return { ok: false, state, stages, proof };
   };
 
@@ -262,6 +245,17 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
         imageValidation.issues,
       );
     }
+    // A required image with no bytes is not publishable. The publisher writes
+    // image.buffer into the repo; metadata-only success would commit an article
+    // referencing an asset that was never written.
+    if (mode === "publish" && site.imagePolicy.required
+        && acquired.status === "acquired" && !acquired.image?.buffer) {
+      throw new PipelineError(
+        "acquire-image",
+        "Image acquisition returned metadata without publishable bytes; refusing to publish.",
+        "IMAGE_ARTIFACT_MISSING",
+      );
+    }
     state = assertTransition(state, "VALIDATED");
     record("acquire-image", true, { provider: acquired.image?.provider, status: acquired.status });
 
@@ -290,7 +284,6 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
         completedAt: new Date().toISOString(),
       });
       await deps.reporter.report(proof);
-      await reportToAuthority(deps, proof);
       record("publish", true, "skipped, dry-run");
       return { ok: true, state: "VALIDATED", mode, stages, article, image: acquired.image, proof };
     }
@@ -354,8 +347,7 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
       completedAt: new Date().toISOString(),
     });
     await deps.reporter.report(proof);
-    const authority = await reportToAuthority(deps, proof);
-    record("report", true, authority ? `job_runs ${authority.id} ${authority.status}` : "file sink only");
+    record("report", true, "durable proof written");
 
     return { ok: true, state, mode, stages, article, image: acquired.image, proof };
   } catch (error) {
