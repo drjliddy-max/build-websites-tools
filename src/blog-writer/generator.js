@@ -41,25 +41,50 @@ import { slugify, MIN_H2_COUNT, BODY_MIN_WORDS } from "./validators.js";
 export const ARTICLE_RESPONSE_SCHEMA = {
   type: "object",
   properties: {
-    title: { type: "string" },
-    metaDescription: { type: "string" },
-    introduction: { type: "string" },
+    title: { type: "string", description: "Article headline, 20-70 characters, no trailing period." },
+    metaDescription: { type: "string", description: "Search snippet, 70-160 characters." },
+    introduction: {
+      type: "string",
+      description:
+        "Opening prose before the first heading. Several full sentences, not a single line.",
+    },
     sections: {
       type: "array",
       minItems: MIN_H2_COUNT,
+      description:
+        `At least ${MIN_H2_COUNT} sections. Together with the introduction they must reach ` +
+        `${BODY_MIN_WORDS} words of substantive prose.`,
       items: {
         type: "object",
         properties: {
-          heading: { type: "string" },
-          body: { type: "string" },
+          heading: { type: "string", description: "Short section heading. Do not include '##'." },
+          body: {
+            type: "string",
+            description:
+              `Several substantive paragraphs, roughly ${sectionWordTarget()} words. ` +
+              "Explain, give concrete detail, do not restate the heading.",
+          },
         },
         required: ["heading", "body"],
       },
     },
-    imageQuery: { type: "string" },
+    imageQuery: { type: "string", description: "3-8 plain words describing an accompanying photograph." },
   },
   required: ["title", "metaDescription", "introduction", "sections", "imageQuery"],
 };
+
+/**
+ * Words each section must carry to reach the article minimum.
+ *
+ * Derived, not chosen. The previous contract guaranteed that sections EXIST but
+ * said nothing about depth, so a compliant response was three one-paragraph
+ * stubs totalling ~250 words against a 400-word minimum. The floor is divided
+ * across the sections plus the introduction, with headroom so hitting the target
+ * per section clears the total rather than landing exactly on it.
+ */
+export function sectionWordTarget(minWords = BODY_MIN_WORDS, sections = MIN_H2_COUNT) {
+  return Math.ceil((minWords * 1.25) / (sections + 1));
+}
 
 /** Assemble markdown from the structured response. The generator owns the H2s. */
 export function assembleBody({ introduction, sections }) {
@@ -120,11 +145,15 @@ export function buildPrompt({ site, keyword, supportingKeywords = [], occurrence
     '{"title":"","metaDescription":"","introduction":"","sections":[{"heading":"","body":""}],"imageQuery":""}',
     "",
     `sections: at least ${constraints.minH2Count} entries. Each needs a distinct heading and`,
-    "  several sentences of real prose. Do NOT write '## ' yourself: headings come from the",
+    "  several substantive paragraphs. Do NOT write '## ' yourself: headings come from the",
     "  heading field and the markdown is assembled for you.",
     "introduction: the opening paragraphs, before the first heading.",
-    `The introduction and all section bodies together must total ${constraints.bodyMinWords}-${constraints.bodyMaxWords} words,`,
-    `so aim for roughly ${Math.ceil(constraints.bodyMinWords / constraints.minH2Count)}+ words per section.`,
+    "",
+    "LENGTH IS A HARD REQUIREMENT AND IS THE MOST COMMON REASON OUTPUT IS REJECTED.",
+    `The introduction plus all section bodies must total ${constraints.bodyMinWords}-${constraints.bodyMaxWords} words.`,
+    `Write about ${sectionWordTarget(constraints.bodyMinWords, constraints.minH2Count)} words in the introduction AND in EACH section.`,
+    "That means several paragraphs each, with concrete specifics: what to look for, what it",
+    "means, what to do about it, and what changes with circumstances. Depth, not repetition.",
     "imageQuery: 3-8 plain words describing a photograph to accompany the article.",
     "Do not wrap the JSON in Markdown fences.",
   ]
@@ -141,9 +170,17 @@ export function buildPrompt({ site, keyword, supportingKeywords = [], occurrence
  * nothing.
  */
 export const CORRECTION_INSTRUCTIONS = {
-  "body-too-short": (issue) =>
-    `LENGTH: the article was ${issue.detail} words, below the ${BODY_MIN_WORDS} minimum. ` +
-    `Add substantive material to the EXISTING sections or add another section. Do not pad with restatement.`,
+  "body-too-short": (issue) => {
+    const actual = Number(issue.detail) || 0;
+    const deficit = Math.max(0, BODY_MIN_WORDS - actual);
+    return (
+      `LENGTH: actualWords=${actual}, requiredWords=${BODY_MIN_WORDS}, deficitWords=${deficit}. ` +
+      `Expand substantive explanation across the EXISTING sections, roughly ` +
+      `${Math.ceil(deficit / MIN_H2_COUNT)} more words in each. Keep the same topic and the same ` +
+      "section structure. Add concrete detail: specifics, conditions, what changes the answer. " +
+      "Do not add filler, do not restate what is already written, do not make unsupported claims."
+    );
+  },
   "body-too-long": () => "LENGTH: the article is too long. Tighten, do not delete a whole section.",
   structure: (issue) =>
     `STRUCTURE: only ${issue.detail ?? "too few"} sections were usable. Return at least ` +

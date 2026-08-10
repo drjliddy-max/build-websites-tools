@@ -740,8 +740,8 @@ test("retry: a length failure produces a length correction naming the measured c
     previous: GOOD_ARTICLE,
     issues: [{ code: "body-too-short", message: "x", detail: 265 }],
   });
-  assert.match(prompt, /LENGTH: the article was 265 words/);
-  assert.match(prompt, /Do not pad with restatement/);
+  assert.match(prompt, /actualWords=265/);
+  assert.match(prompt, /deficitWords=135/);
 });
 
 test("retry: a structure failure produces a section-count correction", async () => {
@@ -778,4 +778,52 @@ test("retry: raw validator objects are never handed to the model", async () => {
     issues: [{ code: "body-too-short", message: "internal detail", detail: 100 }],
   });
   assert.ok(!prompt.includes('"code"'), "no serialized issue objects");
+});
+
+// ── length correction must carry the MEASURED deficit ──────────────────────
+
+test("retry: BODY_TOO_SHORT feedback states actual, required and deficit", async () => {
+  const { buildRepairPrompt } = await import("../generator.js");
+  const prompt = buildRepairPrompt({
+    basePrompt: "BASE", previous: GOOD_ARTICLE,
+    issues: [{ code: "body-too-short", message: "x", detail: 247 }],
+  });
+  assert.match(prompt, /actualWords=247/);
+  assert.match(prompt, /requiredWords=400/);
+  assert.match(prompt, /deficitWords=153/);
+  assert.match(prompt, /Do not add filler/);
+  assert.match(prompt, /Keep the same topic/);
+  assert.ok(!/write more/i.test(prompt), "must not degrade to 'write more'");
+});
+
+test("section depth target is derived from the validator, not chosen", async () => {
+  const { sectionWordTarget } = await import("../generator.js");
+  // floor spread across sections + introduction, with headroom
+  assert.equal(sectionWordTarget(400, 3), 125);
+  assert.ok(sectionWordTarget(400, 3) * 4 > 400, "hitting the per-section target must clear the total");
+  assert.equal(sectionWordTarget(800, 3), 250, "scales with the validator minimum");
+});
+
+test("the response schema carries the depth requirement for constrained decoding", async () => {
+  const { ARTICLE_RESPONSE_SCHEMA } = await import("../generator.js");
+  const sections = ARTICLE_RESPONSE_SCHEMA.properties.sections;
+  assert.match(sections.description, /400 words of substantive prose/);
+  assert.match(sections.items.properties.body.description, /roughly 125 words/);
+  assert.match(sections.items.properties.heading.description, /Do not include '##'/);
+});
+
+test("a body meeting length and structure passes unchanged validators", () => {
+  const long = [
+    SECTION_PROSE.repeat(4),
+    "## First", SECTION_PROSE.repeat(4),
+    "## Second", SECTION_PROSE.repeat(4),
+    "## Third", SECTION_PROSE.repeat(4),
+  ].join("\n\n");
+  const result = validateArticle({
+    article: { ...GOOD_ARTICLE, body: long },
+    site: SITE,
+    history: NO_HISTORY,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.issues));
+  assert.ok(long.trim().split(/\s+/).length >= 400);
 });
