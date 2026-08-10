@@ -190,6 +190,12 @@ export function resolveTopic({ site, primary = [], secondary = [], history = { t
       supporting: typeof row === "string" ? [] : row.supporting ?? [],
       provenance: TOPIC_PROVENANCE.REPLENISHED,
       source: site.keywordSource?.secondary ?? "secondary",
+      // Carry governed-source provenance through. Without this an accepted
+      // replenished topic cannot be explained back to the page it came from,
+      // which is the entire point of deriving it from governed content.
+      topicSourceType: typeof row === "string" ? undefined : row.topicSourceType,
+      sourceRef: typeof row === "string" ? undefined : row.sourceRef,
+      sourceConcept: typeof row === "string" ? undefined : row.sourceConcept,
       rejectedCandidates: rejected,
     };
   }

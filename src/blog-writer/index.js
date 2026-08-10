@@ -13,6 +13,7 @@ export * from "./imageProvider.js";
 export * from "./proof.js";
 export * from "./publisher.js";
 export * from "./topicSupply.js";
+export * from "./governedTopics.js";
 export * from "./modelPolicy.js";
 export * from "./estateGuard.js";
 export { runBlogWriterPipeline, PIPELINE_VERSION, PipelineError } from "./pipeline.js";
