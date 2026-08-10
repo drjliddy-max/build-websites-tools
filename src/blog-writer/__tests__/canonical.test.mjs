@@ -14,18 +14,18 @@ import {
   buildRegistry,
   validateRegistration,
   RegistrationError,
-  DISALLOWED_IMAGE_PATHS,
+  DISALLOWED_IMAGE_PATHS
 } from "../registry.js";
 import { validateArticle, validateImage, slugify } from "../validators.js";
 import { parseModelJson, buildPrompt, generateArticle, GenerationError } from "../generator.js";
-import { acquireImage, createPexelsProvider, createMemoryStore, imageFilename } from "../imageProvider.js";
+import { acquireImage, createPexelsProvider, imageFilename, imagePublicPath } from "../imageProvider.js";
 import {
   assertTransition,
   buildProof,
   createDurableReporter,
   createInMemoryTestSink,
   idempotencyKey,
-  StateTransitionError,
+  StateTransitionError
 } from "../proof.js";
 import { runBlogWriterPipeline, PIPELINE_VERSION } from "../pipeline.js";
 
@@ -42,17 +42,17 @@ const SITE = {
     audience: "athletes and sports-injury rehab patients in Los Angeles",
     voice: "physician-directed, clinical but approachable",
     expertise: "D.C. with 20+ years in performance medicine",
-    prohibitedTerms: ["wellness journey", "transform your life", "pain-free"],
+    prohibitedTerms: ["wellness journey", "transform your life", "pain-free"]
   },
   imagePolicy: { required: true, provider: "pexels", queryHint: "athlete recovery rehabilitation" },
   publication: {
     adapter: "github-repo-commit",
     workflowFile: "blog-writer-qirofit-publish.yml",
     schedulePath: "blog-schedule.json",
-    draftDir: ".siteclinic/automation/blog-writer-qirofit/drafts",
+    draftDir: ".siteclinic/automation/blog-writer-qirofit/drafts"
   },
   credentials: { github: "GITHUB_TOKEN", pexels: "PEXELS_API_KEY" },
-  monitorKey: "blog-writer-qirofit",
+  monitorKey: "blog-writer-qirofit"
 };
 
 function goodBody() {
@@ -79,7 +79,7 @@ const GOOD_ARTICLE = {
   body: goodBody(),
   imageQuery: "athlete recovery massage therapy",
   keyword: "cupping therapy Los Angeles",
-  supportingKeywords: [],
+  supportingKeywords: []
 };
 
 const MIN_H2_COUNT_FOR_TEST = 3;
@@ -93,9 +93,9 @@ function modelResponse({ title, metaDescription, imageQuery, sectionBody, sectio
     introduction: sectionBody,
     sections: Array.from({ length: sections }, (_, i) => ({
       heading: `Section heading ${i + 1}`,
-      body: sectionBody,
+      body: sectionBody
     })),
-    imageQuery,
+    imageQuery
   });
 }
 
@@ -114,14 +114,14 @@ test("registry: a valid registration is accepted", () => {
 test("registry: credentials must be env var NAMES, never values", () => {
   assert.throws(
     () => validateRegistration({ ...SITE, credentials: { pexels: "sk-live-abc123" } }),
-    RegistrationError,
+    RegistrationError
   );
 });
 
 test("registry: repo-hosted images require an explicit opt-out reason", () => {
   assert.throws(
     () => validateRegistration({ ...SITE, imagePolicy: { required: true, provider: "repo-hosted" } }),
-    /optOutReason/,
+    /optOutReason/
   );
   assert.ok(
     validateRegistration({
@@ -130,9 +130,9 @@ test("registry: repo-hosted images require an explicit opt-out reason", () => {
         required: true,
         provider: "repo-hosted",
         repoAsset: "/photos/x.jpg",
-        optOutReason: "practice-owned clinical photography",
-      },
-    }),
+        optOutReason: "practice-owned clinical photography"
+      }
+    })
   );
 });
 
@@ -149,7 +149,7 @@ test("PART 5 PROOF: an eighth site enrols by registration alone", () => {
     laneKey: "blog-writer-test-site",
     repository: { owner: "drjliddy-max", name: "test-site-web" },
     monitorKey: "blog-writer-test-site",
-    publication: { ...SITE.publication, workflowFile: "blog-writer-test-site-publish.yml" },
+    publication: { ...SITE.publication, workflowFile: "blog-writer-test-site-publish.yml" }
   };
   const registry = buildRegistry([SITE, eighth]);
   assert.equal(registry.ids().length, 2);
@@ -179,7 +179,7 @@ test("REGRESSION (qirofit 2026-08-08): a 167-character meta description fails", 
   const result = validateArticle({
     article: { ...GOOD_ARTICLE, metaDescription: meta },
     site: SITE,
-    history: NO_HISTORY,
+    history: NO_HISTORY
   });
   assert.equal(result.ok, false);
   assert.ok(result.issues.some((i) => i.code === "meta-length" && i.detail === 167));
@@ -189,7 +189,7 @@ test("REGRESSION (qirofit 2026-08-08): the banned word 'cure' fails", () => {
   const result = validateArticle({
     article: { ...GOOD_ARTICLE, body: `${GOOD_ARTICLE.body}\n\nCupping does not cure anything.` },
     site: SITE,
-    history: NO_HISTORY,
+    history: NO_HISTORY
   });
   assert.equal(result.ok, false);
   assert.ok(result.issues.some((i) => i.code === "prohibited-term" && i.detail === "cure"));
@@ -204,7 +204,7 @@ test("validators: site-registered prohibited terms are enforced", () => {
   const result = validateArticle({
     article: { ...GOOD_ARTICLE, body: `${GOOD_ARTICLE.body}\n\nStart your wellness journey today.` },
     site: SITE,
-    history: NO_HISTORY,
+    history: NO_HISTORY
   });
   assert.ok(result.issues.some((i) => i.detail === "wellness journey"));
 });
@@ -213,7 +213,7 @@ test("validators: duplicate slug and duplicate title are rejected", () => {
   const result = validateArticle({
     article: GOOD_ARTICLE,
     site: SITE,
-    history: { slugs: [GOOD_ARTICLE.slug], titles: [GOOD_ARTICLE.title] },
+    history: { slugs: [GOOD_ARTICLE.slug], titles: [GOOD_ARTICLE.title] }
   });
   assert.ok(result.issues.some((i) => i.code === "duplicate-slug"));
   assert.ok(result.issues.some((i) => i.code === "duplicate-title"));
@@ -223,14 +223,14 @@ test("validators: placeholder residue and truncation are rejected", () => {
   const residue = validateArticle({
     article: { ...GOOD_ARTICLE, body: `${GOOD_ARTICLE.body}\n\n[INSERT CONCLUSION HERE]` },
     site: SITE,
-    history: NO_HISTORY,
+    history: NO_HISTORY
   });
   assert.ok(residue.issues.some((i) => i.code === "placeholder-residue"));
 
   const truncated = validateArticle({
     article: { ...GOOD_ARTICLE, body: `${GOOD_ARTICLE.body} and then the sentence just stops` },
     site: SITE,
-    history: NO_HISTORY,
+    history: NO_HISTORY
   });
   assert.ok(truncated.issues.some((i) => i.code === "truncated-body"));
 });
@@ -241,10 +241,10 @@ test("validators: an article that drifts off its keyword is rejected", () => {
       ...GOOD_ARTICLE,
       title: "How to choose running shoes for marathons",
       body: goodBody().replace(/cupping therapy/g, "shoe selection"),
-      keyword: "myofascial decompression protocol",
+      keyword: "myofascial decompression protocol"
     },
     site: SITE,
-    history: NO_HISTORY,
+    history: NO_HISTORY
   });
   assert.ok(result.issues.some((i) => i.code === "topic-drift"));
 });
@@ -253,7 +253,7 @@ test("validators: unsupported fields are a contract breach", () => {
   const result = validateArticle({
     article: { ...GOOD_ARTICLE, publishNow: true },
     site: SITE,
-    history: NO_HISTORY,
+    history: NO_HISTORY
   });
   assert.ok(result.issues.some((i) => i.code === "unsupported-field"));
 });
@@ -262,7 +262,7 @@ test("validators: /og-image.jpg is rejected as an article photo", () => {
   const result = validateImage({
     image: { url: "/og-image.jpg", alt: "a sufficiently long alt text", provider: "pexels" },
     site: SITE,
-    disallowedPaths: DISALLOWED_IMAGE_PATHS,
+    disallowedPaths: DISALLOWED_IMAGE_PATHS
   });
   assert.equal(result.ok, false);
   assert.ok(result.issues.some((i) => i.code === "image-disallowed"));
@@ -272,7 +272,7 @@ test("validators: image provider must match the registered policy", () => {
   const result = validateImage({
     image: { url: "/photos/x.jpg", alt: "a sufficiently long alt text", provider: "repo-hosted" },
     site: SITE,
-    disallowedPaths: DISALLOWED_IMAGE_PATHS,
+    disallowedPaths: DISALLOWED_IMAGE_PATHS
   });
   assert.ok(result.issues.some((i) => i.code === "image-provider-mismatch"));
 });
@@ -291,7 +291,7 @@ test("generator: the prompt carries every site constraint", () => {
     supportingKeywords: [],
     occurrence: "2026-08-22",
     history: { slugs: [], titles: ["An earlier article"] },
-    constraints: { titleMin: 20, titleMax: 70, metaMin: 70, metaMax: 160, bodyMinWords: 400, bodyMaxWords: 2500, minH2Count: 3 },
+    constraints: { titleMin: 20, titleMax: 70, metaMin: 70, metaMax: 160, bodyMinWords: 400, bodyMaxWords: 2500, minH2Count: 3 }
   });
   assert.match(prompt, /70-160 characters/);
   assert.match(prompt, /wellness journey/);
@@ -325,15 +325,15 @@ test("generator: output is never self-certified, validation runs separately", as
         metaDescription: "short",
         introduction: "tiny",
         sections: [{ heading: "One", body: "tiny" }, { heading: "Two", body: "tiny" }, { heading: "Three", body: "tiny" }],
-        imageQuery: "x",
-      }),
+        imageQuery: "x"
+      })
   };
   const article = await generateArticle({
     site: SITE,
     keyword: "cupping therapy Los Angeles",
     occurrence: "2026-08-22",
     provider: stub,
-    constraints: { titleMin: 20, titleMax: 70, metaMin: 70, metaMax: 160, bodyMinWords: 400, bodyMaxWords: 2500, minH2Count: 3 },
+    constraints: { titleMin: 20, titleMax: 70, metaMin: 70, metaMax: 160, bodyMinWords: 400, bodyMaxWords: 2500, minH2Count: 3 }
   });
   // generateArticle returns it happily...
   assert.equal(article.title, "A guaranteed cure for every athlete injury");
@@ -356,9 +356,9 @@ const PEXELS_FIXTURE = {
       photographer: "Jane Doe",
       photographer_url: "https://pexels.com/@janedoe",
       alt: "An athlete performing a recovery stretch on a gym floor",
-      src: { large2x: "https://images.pexels.com/photos/4321/large2x.jpg" },
+      src: { large2x: "https://images.pexels.com/photos/4321/large2x.jpg" }
     },
-  ],
+  ]
 };
 
 function fixtureFetch(imageBytes = 250_000) {
@@ -371,7 +371,7 @@ function fixtureFetch(imageBytes = 250_000) {
       ok: true,
       status: 200,
       headers: { get: () => "image/jpeg" },
-      arrayBuffer: async () => new ArrayBuffer(imageBytes),
+      arrayBuffer: async () => new ArrayBuffer(imageBytes)
     };
   };
 }
@@ -379,8 +379,7 @@ function fixtureFetch(imageBytes = 250_000) {
 test("image: the real client boundary works from a recorded response", async () => {
   process.env.PEXELS_API_KEY = "fixture-key";
   const provider = createPexelsProvider({ fetchImpl: fixtureFetch() });
-  const store = createMemoryStore();
-  const result = await acquireImage({ site: SITE, article: GOOD_ARTICLE, provider, store });
+  const result = await acquireImage({ site: SITE, article: GOOD_ARTICLE, provider });
 
   assert.equal(result.status, "acquired");
   assert.equal(result.image.provider, "pexels");
@@ -389,7 +388,8 @@ test("image: the real client boundary works from a recorded response", async () 
   // the 800px candidate must be skipped for the 3000px one
   assert.match(result.image.url, /4321/);
   assert.equal(result.image.byteLength, 250_000);
-  assert.equal(store.size(), 1);
+  // the publishable artifact, not just metadata
+  assert.ok(Buffer.isBuffer(result.image.buffer));
   delete process.env.PEXELS_API_KEY;
 });
 
@@ -397,8 +397,8 @@ test("image: acquisition without a credential fails closed, it does not fall bac
   delete process.env.PEXELS_API_KEY;
   const provider = createPexelsProvider({ fetchImpl: fixtureFetch() });
   await assert.rejects(
-    () => acquireImage({ site: SITE, article: GOOD_ARTICLE, provider, store: createMemoryStore() }),
-    /PEXELS_API_KEY is not set/,
+    () => acquireImage({ site: SITE, article: GOOD_ARTICLE, provider }),
+    /PEXELS_API_KEY is not set/
   );
 });
 
@@ -409,26 +409,29 @@ test("image: a declared repo-hosted policy is recorded as such, not as Pexels", 
       required: true,
       provider: "repo-hosted",
       repoAsset: "/photos/modality-cupping.jpg",
-      optOutReason: "practice-owned clinical photography",
-    },
+      optOutReason: "practice-owned clinical photography"
+    }
   };
-  const result = await acquireImage({ site: optOut, article: GOOD_ARTICLE, provider: null, store: null });
+  const result = await acquireImage({ site: optOut, article: GOOD_ARTICLE, provider: null });
   assert.equal(result.status, "repo-hosted");
   assert.equal(result.image.provider, "repo-hosted");
   assert.notEqual(result.image.provider, "pexels");
 });
 
-test("image: filenames are deterministic and never overwrite", async () => {
-  assert.equal(
-    imageFilename({ slug: "what-cupping-does", photoId: 4321, contentType: "image/jpeg" }),
-    "what-cupping-does-4321.jpg",
-  );
-  const store = createMemoryStore();
-  await store.put({ filename: "a.jpg", buffer: Buffer.alloc(10), contentType: "image/jpeg" });
-  await assert.rejects(
-    () => store.put({ filename: "a.jpg", buffer: Buffer.alloc(10), contentType: "image/jpeg" }),
-    /Refusing to overwrite/,
-  );
+test("image: filenames are deterministic, which IS the idempotency guarantee", async () => {
+  // The old in-memory store refused to overwrite an existing key. That guard
+  // went with the store, and it was never the real protection: the filename is
+  // derived from the article slug and the Pexels photo id, so the same
+  // occurrence selecting the same photo resolves to the same path and the same
+  // bytes. A rerun overwrites itself, byte for byte.
+  const a = imageFilename({ slug: "what-cupping-does", photoId: 4321, contentType: "image/jpeg" });
+  const b = imageFilename({ slug: "what-cupping-does", photoId: 4321, contentType: "image/jpeg" });
+  assert.equal(a, b, "same identity must resolve to the same filename");
+  assert.equal(a, "what-cupping-does-4321.jpg");
+  assert.notEqual(a, imageFilename({ slug: "what-cupping-does", photoId: 9999, contentType: "image/jpeg" }));
+  assert.notEqual(a, imageFilename({ slug: "other-article", photoId: 4321, contentType: "image/jpeg" }));
+  // and the public path derives purely from it
+  assert.equal(imagePublicPath(a), "/photos/what-cupping-does-4321.jpg");
 });
 
 // ── proof + state machine ──────────────────────────────────────────────────
@@ -443,7 +446,7 @@ test("proof: illegal state transitions are refused", () => {
 test("proof: provenance must be declared and cannot be inferred", () => {
   assert.throws(
     () => buildProof({ laneKey: "l", siteId: "s", occurrence: "2026-08-22", state: "COMPLETE", provenance: {}, pipelineVersion: "1" }),
-    /provenance\.classification/,
+    /provenance\.classification/
   );
 });
 
@@ -461,9 +464,9 @@ test("PART 12 PROOF: a historical article cannot claim canonical provenance", ()
       classification: "HISTORICAL_PRE_CANONICAL",
       generatedBy: "hand-authored",
       imageProvider: "repo-hosted",
-      note: "published before the canonical pipeline existed",
+      note: "published before the canonical pipeline existed"
     },
-    pipelineVersion: PIPELINE_VERSION,
+    pipelineVersion: PIPELINE_VERSION
   });
   assert.equal(historical.provenance.classification, "HISTORICAL_PRE_CANONICAL");
   assert.notEqual(historical.provenance.generatedBy, "canonical-pipeline");
@@ -476,8 +479,8 @@ test("proof: durable reporter survives a new reporter instance over the same sin
   await first.report(
     buildProof({
       laneKey: "blog-writer-qirofit", siteId: "qirofit", occurrence: "2026-08-22", state: "COMPLETE",
-      provenance: { classification: "NEW_CANONICAL" }, pipelineVersion: PIPELINE_VERSION,
-    }),
+      provenance: { classification: "NEW_CANONICAL" }, pipelineVersion: PIPELINE_VERSION
+    })
   );
   const second = createDurableReporter({ sink });
   assert.equal(await second.alreadyPublished("blog-writer-qirofit", "2026-08-22"), true);
@@ -487,7 +490,7 @@ test("proof: durable reporter survives a new reporter instance over the same sin
 test("proof: idempotency key is stable", () => {
   assert.equal(
     idempotencyKey({ laneKey: "blog-writer-qirofit", occurrence: "2026-08-22" }),
-    "blog-writer-qirofit:2026-08-22:1",
+    "blog-writer-qirofit:2026-08-22:1"
   );
 });
 
@@ -501,31 +504,30 @@ function pipelineDeps({ modelOutput, schedule, sink = createInMemoryTestSink() }
     keywords: {
       load: async () => [
         { keyword: "cupping therapy Los Angeles", supporting: ["myofascial cupping"] },
-      ],
+      ]
     },
     provider: { id: "stub", model: "stub-1", complete: async () => modelOutput },
     imageProvider: createPexelsProvider({ fetchImpl: fixtureFetch() }),
-    imageStore: createMemoryStore(),
     reporter: createDurableReporter({ sink }),
     verifier: { check: async () => ({ status: 200 }) },
     publisher: { publish: async () => ({ commitSha: "deadbeef" }) },
-    _sink: sink,
+    _sink: sink
   };
 }
 
 const ANCHORED_SCHEDULE = {
   published: [{ slug: "prior", title: "A prior article", target_date: "2026-08-08", keywords: ["other"] }],
-  queue: [],
+  queue: []
 };
 
 test("pipeline: dry-run runs every stage and commits nothing", async () => {
   const deps = pipelineDeps({
     modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
-    schedule: ANCHORED_SCHEDULE,
+    schedule: ANCHORED_SCHEDULE
   });
   const result = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "dry-run" },
-    deps,
+    deps
   );
   assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
   assert.equal(result.state, "VALIDATED");
@@ -541,7 +543,7 @@ test("pipeline: an off-cadence occurrence is refused", async () => {
   const deps = pipelineDeps({ modelOutput: "{}", schedule: ANCHORED_SCHEDULE });
   const result = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-13", mode: "dry-run" },
-    deps,
+    deps
   );
   assert.equal(result.ok, false);
   assert.equal(result.state, "FAILED");
@@ -552,7 +554,7 @@ test("pipeline: an unregistered site cannot run", async () => {
   const deps = pipelineDeps({ modelOutput: "{}", schedule: ANCHORED_SCHEDULE });
   const result = await runBlogWriterPipeline(
     { siteId: "not-registered", occurrence: "2026-08-22", mode: "dry-run" },
-    deps,
+    deps
   );
   assert.equal(result.ok, false);
   assert.match(result.proof.failure.reason, /not registered/);
@@ -565,14 +567,14 @@ test("pipeline: invalid generated content fails closed with no publication", asy
       title: GOOD_ARTICLE.title,
       metaDescription: GOOD_ARTICLE.metaDescription,
       imageQuery: "x",
-      sectionBody: `${SECTION_PROSE.repeat(6)} This will cure your injury.`,
+      sectionBody: `${SECTION_PROSE.repeat(6)} This will cure your injury.`
     }),
-    schedule: ANCHORED_SCHEDULE,
+    schedule: ANCHORED_SCHEDULE
   });
   deps.publisher = { publish: async () => { published = true; return { commitSha: "x" }; } };
   const result = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" },
-    deps,
+    deps
   );
   assert.equal(result.ok, false);
   assert.equal(published, false, "nothing may publish after a validation failure");
@@ -582,11 +584,11 @@ test("pipeline: invalid generated content fails closed with no publication", asy
 test("PART 11 PROOF: publish mode requires live verification of article AND image", async () => {
   const deps = pipelineDeps({
     modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
-    schedule: ANCHORED_SCHEDULE,
+    schedule: ANCHORED_SCHEDULE
   });
   const result = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" },
-    deps,
+    deps
   );
   assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
   assert.equal(result.state, "COMPLETE");
@@ -599,12 +601,12 @@ test("PART 11 PROOF: publish mode requires live verification of article AND imag
 test("pipeline: a 404 article aborts before COMPLETE", async () => {
   const deps = pipelineDeps({
     modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
-    schedule: ANCHORED_SCHEDULE,
+    schedule: ANCHORED_SCHEDULE
   });
   deps.verifier = { check: async () => ({ status: 404 }) };
   const result = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" },
-    deps,
+    deps
   );
   assert.equal(result.ok, false);
   assert.match(result.proof.failure.reason, /HTTP 404/);
@@ -615,7 +617,7 @@ test("PART 11 PROOF: a re-run does not create a second article", async () => {
   const output = modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) });
   const first = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" },
-    pipelineDeps({ modelOutput: output, schedule: ANCHORED_SCHEDULE, sink }),
+    pipelineDeps({ modelOutput: output, schedule: ANCHORED_SCHEDULE, sink })
   );
   assert.equal(first.state, "COMPLETE");
 
@@ -624,7 +626,7 @@ test("PART 11 PROOF: a re-run does not create a second article", async () => {
   deps2.publisher = { publish: async () => { secondPublishCalled = true; return { commitSha: "second" }; } };
   const second = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" },
-    deps2,
+    deps2
   );
   assert.equal(second.idempotentNoOp, true);
   assert.equal(secondPublishCalled, false, "a re-run must not publish again");
@@ -638,12 +640,12 @@ test("pipeline: a schedule already carrying the occurrence is a no-op", async ()
         { slug: "prior", title: "A prior article", target_date: "2026-08-08" },
         { slug: "already", title: "Already there", target_date: "2026-08-22" },
       ],
-      queue: [],
-    },
+      queue: []
+    }
   });
   const result = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" },
-    deps,
+    deps
   );
   assert.equal(result.idempotentNoOp, true);
 });
@@ -653,7 +655,7 @@ test("pipeline: an exhausted supply with no replenishment fails rather than repe
   deps.keywords = { load: async () => ({ primary: [], secondary: [] }) };
   const result = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "dry-run" },
-    deps,
+    deps
   );
   assert.equal(result.ok, false);
   assert.match(result.proof.failure.reason, /primary keywords exhausted/);
@@ -664,18 +666,18 @@ test("pipeline: an exhausted primary pool is rescued by replenishment", async ()
     modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
     schedule: {
       published: [{ slug: "prior", title: "A prior article", target_date: "2026-08-08", keywords: ["cupping therapy Los Angeles"] }],
-      queue: [],
-    },
+      queue: []
+    }
   });
   deps.keywords = {
     load: async () => ({
       primary: [{ keyword: "cupping therapy Los Angeles" }],
-      secondary: [{ keyword: "cupping therapy for athletes" }],
-    }),
+      secondary: [{ keyword: "cupping therapy for athletes" }]
+    })
   };
   const result = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "dry-run" },
-    deps,
+    deps
   );
   assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
   assert.equal(result.proof.provenance.topicProvenance, "REPLENISHED_TOPIC");
@@ -691,7 +693,7 @@ test("REGRESSION: a body with no H2 headings fails validation", () => {
   const result = validateArticle({
     article: { ...GOOD_ARTICLE, body: SECTION_PROSE.repeat(20) },
     site: SITE,
-    history: NO_HISTORY,
+    history: NO_HISTORY
   });
   assert.equal(result.ok, false);
   assert.ok(result.issues.some((i) => i.code === "structure"));
@@ -702,9 +704,9 @@ test("REGRESSION: headings with empty sections are refused at parse time", async
   assert.throws(
     () => parseModelJson(JSON.stringify({
       title: "t", metaDescription: "m", introduction: "i", imageQuery: "q",
-      sections: [{ heading: "Real heading", body: "" }],
+      sections: [{ heading: "Real heading", body: "" }]
     })),
-    /has no body/,
+    /has no body/
   );
 });
 
@@ -716,7 +718,7 @@ test("REGRESSION: the generator assembles H2 markers itself", async () => {
       { heading: "First", body: "Alpha." },
       { heading: "Second", body: "Beta." },
       { heading: "Third", body: "Gamma." },
-    ],
+    ]
   });
   assert.equal((body.match(/^##\s+\S/gm) || []).length, 3);
   assert.match(body, /^Opening paragraph\./);
@@ -738,7 +740,7 @@ test("retry: a length failure produces a length correction naming the measured c
   const prompt = buildRepairPrompt({
     basePrompt: "BASE",
     previous: GOOD_ARTICLE,
-    issues: [{ code: "body-too-short", message: "x", detail: 265 }],
+    issues: [{ code: "body-too-short", message: "x", detail: 265 }]
   });
   assert.match(prompt, /actualWords=265/);
   assert.match(prompt, /deficitWords=135/);
@@ -748,7 +750,7 @@ test("retry: a structure failure produces a section-count correction", async () 
   const { buildRepairPrompt } = await import("../generator.js");
   const prompt = buildRepairPrompt({
     basePrompt: "BASE", previous: GOOD_ARTICLE,
-    issues: [{ code: "structure", message: "x", detail: 0 }],
+    issues: [{ code: "structure", message: "x", detail: 0 }]
   });
   assert.match(prompt, /STRUCTURE: only 0 sections were usable/);
 });
@@ -757,7 +759,7 @@ test("retry: topic drift reinforces the resolved topic", async () => {
   const { buildRepairPrompt } = await import("../generator.js");
   const prompt = buildRepairPrompt({
     basePrompt: "BASE", previous: GOOD_ARTICLE,
-    issues: [{ code: "topic-drift", message: "x", detail: "cupping therapy Los Angeles" }],
+    issues: [{ code: "topic-drift", message: "x", detail: "cupping therapy Los Angeles" }]
   });
   assert.match(prompt, /TOPIC: .*"cupping therapy Los Angeles"/);
 });
@@ -766,7 +768,7 @@ test("retry: a prohibited term is not fixable by deletion alone", async () => {
   const { buildRepairPrompt } = await import("../generator.js");
   const prompt = buildRepairPrompt({
     basePrompt: "BASE", previous: GOOD_ARTICLE,
-    issues: [{ code: "prohibited-term", message: "x", detail: "cure" }],
+    issues: [{ code: "prohibited-term", message: "x", detail: "cure" }]
   });
   assert.match(prompt, /Do NOT simply delete the word/);
 });
@@ -775,7 +777,7 @@ test("retry: raw validator objects are never handed to the model", async () => {
   const { buildRepairPrompt } = await import("../generator.js");
   const prompt = buildRepairPrompt({
     basePrompt: "BASE", previous: GOOD_ARTICLE,
-    issues: [{ code: "body-too-short", message: "internal detail", detail: 100 }],
+    issues: [{ code: "body-too-short", message: "internal detail", detail: 100 }]
   });
   assert.ok(!prompt.includes('"code"'), "no serialized issue objects");
 });
@@ -786,7 +788,7 @@ test("retry: BODY_TOO_SHORT feedback states actual, required and deficit", async
   const { buildRepairPrompt } = await import("../generator.js");
   const prompt = buildRepairPrompt({
     basePrompt: "BASE", previous: GOOD_ARTICLE,
-    issues: [{ code: "body-too-short", message: "x", detail: 247 }],
+    issues: [{ code: "body-too-short", message: "x", detail: 247 }]
   });
   assert.match(prompt, /actualWords=247/);
   assert.match(prompt, /requiredWords=400/);
@@ -822,7 +824,7 @@ test("a body meeting length and structure passes unchanged validators", () => {
   const result = validateArticle({
     article: { ...GOOD_ARTICLE, body: long },
     site: SITE,
-    history: NO_HISTORY,
+    history: NO_HISTORY
   });
   assert.equal(result.ok, true, JSON.stringify(result.issues));
   assert.ok(long.trim().split(/\s+/).length >= 400);
@@ -861,7 +863,7 @@ test("PREFLIGHT: the pipeline stops before generation, so no model call is spent
   deps.provider = { id: "local", model: "m", complete: async () => { generatorCalled = true; return "{}"; } };
   const result = await runBlogWriterPipeline(
     { siteId: "qirofit", occurrence: "2026-08-22", mode: "dry-run" },
-    deps,
+    deps
   );
   assert.equal(result.ok, false);
   assert.equal(result.proof.failure.stage, "preflight-credentials");
@@ -889,11 +891,10 @@ test("PREFLIGHT: no image means the publisher never runs", async () => {
 
 test("REACHABILITY: acquired images carry publishable bytes, not just metadata", async () => {
   process.env.PEXELS_API_KEY = "fixture-key";
-  const { acquireImage, createPexelsProvider, createMemoryStore } = await import("../imageProvider.js");
+  const { acquireImage, createPexelsProvider } = await import("../imageProvider.js");
   const result = await acquireImage({
     site: SITE, article: GOOD_ARTICLE,
     provider: createPexelsProvider({ fetchImpl: fixtureFetch() }),
-    store: createMemoryStore(),
   });
   assert.ok(Buffer.isBuffer(result.image.buffer), "publisher.js stages image.buffer; it must exist");
   assert.equal(result.image.buffer.length, result.image.byteLength);
@@ -903,12 +904,11 @@ test("REACHABILITY: acquired images carry publishable bytes, not just metadata",
 
 test("REACHABILITY: the publisher's image contract matches what acquisition returns", async () => {
   process.env.PEXELS_API_KEY = "fixture-key";
-  const { acquireImage, createPexelsProvider, createMemoryStore } = await import("../imageProvider.js");
+  const { acquireImage, createPexelsProvider } = await import("../imageProvider.js");
   const { serializeDraft } = await import("../publisher.js");
   const acquired = await acquireImage({
     site: SITE, article: GOOD_ARTICLE,
     provider: createPexelsProvider({ fetchImpl: fixtureFetch() }),
-    store: createMemoryStore(),
   });
   // publisher.js:201 gates image placement on exactly these two fields
   assert.ok(acquired.image.buffer && acquired.image.filename,
@@ -923,20 +923,19 @@ test("REACHABILITY: publish mode refuses a metadata-only image", async () => {
   const deps = pipelineDeps({
     modelOutput: modelResponse({
       title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription,
-      imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6),
+      imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6)
     }),
-    schedule: ANCHORED_SCHEDULE,
+    schedule: ANCHORED_SCHEDULE
   });
   // a provider that returns metadata but no bytes: the exact defect
   deps.imageProvider = {
     id: "pexels", licence: "Pexels License",
     search: async () => [{ id: 1, width: 3000, alt: "a photograph of something", src: { large2x: "https://x/y.jpg" } }],
-    download: async () => ({ buffer: Buffer.alloc(0), contentType: "image/jpeg" }),
+    download: async () => ({ buffer: Buffer.alloc(0), contentType: "image/jpeg" })
   };
-  deps.imageStore = { put: async ({ filename }) => ({ publicPath: `/photos/${filename}`, bytes: 0 }) };
   deps.publisher = { publish: async () => { published = true; return { commitSha: "x" }; } };
   const result = await runBlogWriterPipeline(
-    { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" }, deps,
+    { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" }, deps
   );
   assert.equal(result.ok, false);
   assert.equal(published, false, "no publication without publishable bytes");
@@ -948,4 +947,38 @@ test("REACHABILITY: no dead job_runs seam remains in the pipeline", async () => 
   assert.equal(typeof index.createJobRunsReporter, "undefined",
     "the direct-writer seam was wrong: site-monitor/jobExecutor owns job_runs");
   assert.equal(typeof pipeline.reportToAuthority, "undefined");
+});
+
+// ── PRODUCTION IMAGE COMPOSITION ───────────────────────────────────────────
+// The publisher owns persistence. Acquisition owns bytes and path derivation.
+// There is no store in between, because a "store" that stored nothing is how a
+// reader concludes the bytes are handled somewhere they are not.
+
+test("COMPOSITION: acquireImage takes no store, so none can be threaded through", async () => {
+  const mod = await import("../imageProvider.js");
+  assert.equal(typeof mod.createMemoryStore, "undefined",
+    "the store abstraction was removed; publisher owns persistence");
+  assert.equal(mod.acquireImage.length, 1, "acquireImage takes a single options object");
+  const src = mod.acquireImage.toString();
+  assert.ok(!/\bstore\b/.test(src), "no store reference may remain in acquisition");
+});
+
+test("COMPOSITION: the public path is a pure function of the filename", async () => {
+  const { imagePublicPath } = await import("../imageProvider.js");
+  assert.equal(imagePublicPath("x-1.jpg"), "/photos/x-1.jpg");
+  assert.equal(imagePublicPath("x-1.jpg"), imagePublicPath("x-1.jpg"), "deterministic");
+  assert.equal(imagePublicPath("x-1.jpg", "/assets"), "/assets/x-1.jpg");
+});
+
+test("COMPOSITION: acquisition path and publisher path agree on layout", async () => {
+  const { imagePublicPath } = await import("../imageProvider.js");
+  const { createDefaultAdapter } = await import("../publisher.js");
+  const adapter = createDefaultAdapter(SITE);
+  const filename = "what-cupping-4321.jpg";
+  // publisher writes here; the article references this. They must correspond,
+  // because `public/` is the static root served at `/`.
+  assert.equal(adapter.imagePath(filename), "public/photos/" + filename);
+  assert.equal(imagePublicPath(filename), "/photos/" + filename);
+  assert.equal("public" + imagePublicPath(filename), adapter.imagePath(filename),
+    "a drift between these two silently publishes a broken image reference");
 });
