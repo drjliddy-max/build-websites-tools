@@ -16,11 +16,44 @@
 const PEXELS_SEARCH_ENDPOINT = "https://api.pexels.com/v1/search";
 
 export class ImageAcquisitionError extends Error {
-  constructor(message, detail) {
+  constructor(message, detail, code = "IMAGE_ACQUISITION_FAILED") {
     super(message);
     this.name = "ImageAcquisitionError";
     this.detail = detail;
+    this.code = code;
   }
+}
+
+/**
+ * Preflight the credential BEFORE any work is done.
+ *
+ * Without this the absence of a credential surfaces as an opaque authorization
+ * error deep inside a run, after generation has already spent a model call. The
+ * production workflows referenced no secrets at all, so this was the actual
+ * failure every lane would have hit: worth naming precisely rather than
+ * discovering at the HTTP layer.
+ *
+ * Presence is all that is checked. The value is never read, compared, logged or
+ * returned.
+ */
+export function preflightImageCredentials(site, env = process.env, apiKeyEnv = "PEXELS_API_KEY") {
+  if (!site?.imagePolicy?.required) {
+    return { ok: true, provider: null, reason: "image not required by policy" };
+  }
+  if (site.imagePolicy.provider === "repo-hosted") {
+    return { ok: true, provider: "repo-hosted", reason: "declared repo-hosted policy" };
+  }
+  if (!env[apiKeyEnv]?.trim()) {
+    return {
+      ok: false,
+      code: "MISSING_PEXELS_CREDENTIAL",
+      provider: "pexels",
+      reason:
+        `${apiKeyEnv} is not present in the execution environment. The canonical publish ` +
+        "workflow must pass it through as a secret reference; no publication may proceed.",
+    };
+  }
+  return { ok: true, provider: "pexels", reason: "credential present" };
 }
 
 /** Deterministic, collision-resistant filename derived from slug + photo id. */
@@ -53,6 +86,8 @@ export function createPexelsProvider({ apiKeyEnv = "PEXELS_API_KEY", fetchImpl =
       if (!apiKey) {
         throw new ImageAcquisitionError(
           `${apiKeyEnv} is not set; live Pexels acquisition unavailable.`,
+          null,
+          "MISSING_PEXELS_CREDENTIAL",
         );
       }
       const url = new URL(PEXELS_SEARCH_ENDPOINT);
