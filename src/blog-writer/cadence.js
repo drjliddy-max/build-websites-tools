@@ -76,21 +76,48 @@ export function daysBetween(from, to) {
 }
 
 /**
- * The lane's cadence anchor: the most recent publication target date.
+ * The lane's cadence anchor: the most recent publication target date, unless the
+ * schedule carries an explicit `schedule.cadence_anchor` re-basing.
  *
- * Returns null when the lane has never published. A lane with no anchor has no
- * computable slot lattice (inventing one from `now` is the drift the contract
- * forbids), so callers must handle null rather than substitute today.
+ * Returns null when the lane has never published and declares no explicit anchor.
+ * A lane with no anchor has no computable slot lattice (inventing one from `now`
+ * is the drift the contract forbids), so callers must handle null rather than
+ * substitute today.
+ *
+ * EXPLICIT ANCHOR (added for FND-0008 / RMD-0007, operator option (a)): the
+ * original anchor derived from history (2026-08-08, a Saturday) produced a
+ * lattice the Tue/Thu dispatcher could never reach. `schedule.cadence_anchor`
+ * lets governance re-base the lattice explicitly, as reviewed DATA in the
+ * consumer repo. Two fail-closed rules:
+ *   - invalid format throws (a silently ignored governance field is worse than
+ *     a crash);
+ *   - a backdated explicit anchor (earlier than real publication history) is
+ *     refused: re-basing may only move the lattice FORWARD, so an explicit
+ *     anchor can never mask or rewrite what actually published.
  */
 export function resolveCadenceAnchor(schedule) {
   const published = Array.isArray(schedule?.published) ? schedule.published : [];
   const dates = published
     .map((entry) => entry?.target_date)
     .filter((value) => typeof value === "string" && DATE_ONLY.test(value));
-  if (dates.length === 0) {
-    return null;
+  const derived = dates.length === 0
+    ? null
+    : dates.reduce((latest, current) => (current > latest ? current : latest));
+
+  const explicit = schedule?.schedule?.cadence_anchor;
+  if (explicit === undefined || explicit === null) {
+    return derived;
   }
-  return dates.reduce((latest, current) => (current > latest ? current : latest));
+  if (typeof explicit !== "string" || !DATE_ONLY.test(explicit)) {
+    throw new Error(`Invalid cadence_anchor: ${JSON.stringify(explicit)} (expected YYYY-MM-DD)`);
+  }
+  if (derived !== null && explicit < derived) {
+    throw new Error(
+      `cadence_anchor ${explicit} is earlier than the latest real publication ${derived}; ` +
+      "re-basing may only move the lattice forward, never rewrite history.",
+    );
+  }
+  return explicit;
 }
 
 /**
