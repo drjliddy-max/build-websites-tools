@@ -15,6 +15,21 @@ export interface GateConfig {
   launchCommand?: string;
   startupTimeoutMs?: number;
   allowedOffSitemapRoutes?: string[];
+  /**
+   * gate-ada options.
+   *
+   * requireBrowserMode: when true, gate-ada FAILS if Playwright's Chromium cannot
+   * launch, instead of silently continuing in the weaker jsdom html-snapshot mode
+   * (which has no canvas-backed layout and therefore cannot run axe color-contrast).
+   * Defaults to false, preserving the historical fallback, because a stock cloud
+   * build image ships no browser and turning this on without also installing one
+   * would fail every build. Turn it on once the consumer's install step runs
+   * `npx playwright install chromium`, so the gate that guards accessibility cannot
+   * quietly become a weaker gate than the one developers run locally.
+   */
+  ada?: {
+    requireBrowserMode?: boolean;
+  };
   productionSeo?: {
     allowClientOnlyRoutes?: string[];
     minServerRenderedTextChars?: number;
@@ -289,6 +304,22 @@ export function loadGateConfig(): GateConfig {
     }
   }
 
+  if ("ada" in obj && obj.ada !== undefined) {
+    if (typeof obj.ada !== "object" || obj.ada === null || Array.isArray(obj.ada)) {
+      console.error(
+        `✗ ${configPath}: "ada" must be an object when provided, got${JSON.stringify(obj.ada)}`,
+      );
+      process.exit(1);
+    }
+    const ada = obj.ada as Record<string, unknown>;
+    if (ada.requireBrowserMode !== undefined && typeof ada.requireBrowserMode !== "boolean") {
+      console.error(
+        `✗ ${configPath}: "ada.requireBrowserMode" must be a boolean when provided, got${JSON.stringify(ada.requireBrowserMode)}`,
+      );
+      process.exit(1);
+    }
+  }
+
   if ("productionSeo" in obj && obj.productionSeo !== undefined) {
     if (
       typeof obj.productionSeo !== "object" ||
@@ -422,6 +453,10 @@ export function loadGateConfig(): GateConfig {
     allowedOffSitemapRoutes: Array.isArray(obj.allowedOffSitemapRoutes)
       ? (obj.allowedOffSitemapRoutes as string[])
       : undefined,
+    ada:
+      typeof obj.ada === "object" && obj.ada !== null && !Array.isArray(obj.ada)
+        ? (obj.ada as GateConfig["ada"])
+        : undefined,
     productionSeo:
       typeof obj.productionSeo === "object" &&
       obj.productionSeo !== null &&
