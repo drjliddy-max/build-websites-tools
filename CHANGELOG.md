@@ -7,6 +7,19 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.26.1] - 2026-08-11
+
+FND-0008 repair, BWT half (RMD-0007, operator option (a), authorized 2026-08-11).
+
+### Added
+- blog-writer cadence: explicit `schedule.cadence_anchor` re-basing. The derived
+  anchor (2026-08-08, a Saturday) produced a lattice the Tue/Thu dispatcher can
+  never reach. An explicit anchor is reviewed consumer DATA; fail-closed both
+  ways: invalid format throws, and a backdated anchor (earlier than real
+  publication history) is refused so re-basing can only move the lattice
+  forward. Production re-base: 2026-08-13 (Thursday lattice, wake-reachable).
+- approvedPins -> ["v0.26.1"].
+
 ## [0.26.0] - 2026-08-11
 
 Governed repairs of confirmed Blog Writer findings FND-0003 and FND-0005
