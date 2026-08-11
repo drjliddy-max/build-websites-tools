@@ -237,10 +237,15 @@ export function createRepoOwnedPublisher({ git, fs, runGate, adapter, now = () =
           }
         }
 
-        // ── proof, then commit all three together ─────────────────────────
-        const proofPath = site_adapter.proofPath(occurrence);
-        await fs.mkdir(proofPath.replace(/\/[^/]+$/, ""), { recursive: true });
-        const paths = [draftPath, schedulePath, proofPath, imagePath].filter(Boolean);
+        // ── commit draft + schedule + image; the proof is deliberately NOT staged ──
+        // FND-0005: a truthful proof records the publication's outcome, including whether this
+        // very push succeeded, so it cannot exist before the commit that it describes. The old
+        // sequence staged site_adapter.proofPath(occurrence) here while the reporter only wrote
+        // the file after publish() returned: on a lane with no prior proof file `git add` failed
+        // and blocked the first canonical publish; on a lane with a committed FAILED proof it
+        // silently committed the stale artifact. Durable proof lives in the reporter's file sink
+        // and, under the FND-0003 contract, in the workflow's uploaded proof artifact.
+        const paths = [draftPath, schedulePath, imagePath].filter(Boolean);
 
         await git(["add", ...paths]);
         const staged = (await git(["diff", "--cached", "--name-only"])).split("\n").filter(Boolean);
@@ -272,7 +277,9 @@ export function createRepoOwnedPublisher({ git, fs, runGate, adapter, now = () =
           changedFiles: staged,
           draftPath,
           imagePath,
-          proofPath,
+          // Where the reporter will write the durable proof AFTER this publication returns.
+          // Advisory location only: not part of this commit (FND-0005).
+          proofPath: site_adapter.proofPath(occurrence),
           url: site_adapter.publicUrl(article.slug),
           imageUrl: image ? site_adapter.publicImageUrl(image.url) : null,
           publishedDate: publishDate,

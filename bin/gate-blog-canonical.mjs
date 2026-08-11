@@ -33,7 +33,14 @@ const readerFor = (participant) => (filePath) => {
   }
 };
 
-const report = checkEstate({ manifest, readerFor });
+// Byte-identity reference: the canonical entrypoint shipped WITH this gate's package, so the
+// guard and the artifact it enforces can never version-skew against each other.
+const canonicalEntrypoint = readFileSync(
+  path.join(path.dirname(new URL(import.meta.url).pathname), "../contracts/blog-writer-entrypoint/runWorkflow.mjs"),
+  "utf8",
+);
+
+const report = checkEstate({ manifest, readerFor, canonicalEntrypoint });
 for (const result of report.results) {
   if (result.ok) {
     process.stdout.write(`  PASS  ${result.siteId}\n`);

@@ -76,7 +76,7 @@ export class PipelineError extends Error {
  * @param deps.publisher     publication adapter (publish mode only)
  * @param deps.verifier      { check(url) -> {status, contentType, byteLength} }
  */
-export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-run" }, deps) {
+export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-run", dispatch = null }, deps) {
   const startedAt = new Date().toISOString();
   let state = "NOT_STARTED";
   const stages = [];
@@ -99,6 +99,7 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
       verification: null,
       provenance: { classification: "NEW_CANONICAL", generatedBy: "canonical-pipeline" },
       pipelineVersion: PIPELINE_VERSION,
+      dispatch,
       failure: { stage, reason: error.message, detail: error.detail ?? null },
       startedAt,
       completedAt: new Date().toISOString(),
@@ -279,6 +280,7 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
           note: "dry-run: generated, validated and image-acquired; nothing committed or published",
         },
         pipelineVersion: PIPELINE_VERSION,
+        dispatch,
         startedAt,
         completedAt: new Date().toISOString(),
       });
@@ -342,6 +344,7 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
         imageProvider: acquired.image.provider,
       },
       pipelineVersion: PIPELINE_VERSION,
+      dispatch,
       startedAt,
       completedAt: new Date().toISOString(),
     });

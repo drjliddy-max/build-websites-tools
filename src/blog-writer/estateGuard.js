@@ -41,7 +41,7 @@ export const REQUIRED_SIGNATURES = [
  * (origin/main), not a working tree. A guard that trusts a local working tree
  * can be satisfied by uncommitted edits.
  */
-export function checkParticipant(participant, read, { approvedPins }) {
+export function checkParticipant(participant, read, { approvedPins, canonicalEntrypoint = null }) {
   const failures = [];
   const laneDir = `.siteclinic/automation/${participant.laneKey}`;
 
@@ -88,6 +88,18 @@ export function checkParticipant(participant, read, { approvedPins }) {
     failures.push({ code: "missing-entrypoint", message: `${laneDir}/runWorkflow.mjs is absent` });
     return { siteId: participant.siteId, ok: failures.length === 0, failures };
   }
+  // BYTE IDENTITY against the canonical reference (added with the FND-0003 repair). The
+  // 2026-08-09 audit found seven byte-distinct orchestrators that had all passed a
+  // signature-style guard for months; signatures prove presence of shapes, identity proves
+  // absence of divergence. Comparison is exact: an entrypoint is data stamped from the
+  // canonical reference, so any local difference, even a comment, is drift to surface.
+  if (canonicalEntrypoint !== null && entry !== canonicalEntrypoint) {
+    failures.push({
+      code: "entrypoint-drift",
+      message: "runWorkflow.mjs differs from the canonical reference (contracts/blog-writer-entrypoint/runWorkflow.mjs); restamp it, do not hand-edit",
+    });
+  }
+
   // Comments describe what was removed; they must not count as the thing itself.
   const code = entry
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -110,9 +122,9 @@ export function checkParticipant(participant, read, { approvedPins }) {
 }
 
 /** Run the guard across every participant in the manifest. */
-export function checkEstate({ manifest, readerFor }) {
+export function checkEstate({ manifest, readerFor, canonicalEntrypoint = null }) {
   const results = manifest.participants.map((participant) =>
-    checkParticipant(participant, readerFor(participant), { approvedPins: manifest.approvedPins }),
+    checkParticipant(participant, readerFor(participant), { approvedPins: manifest.approvedPins, canonicalEntrypoint }),
   );
   const failed = results.filter((result) => !result.ok);
   return {
