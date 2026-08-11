@@ -81,12 +81,31 @@ export function buildProof({
   failure = null,
   startedAt,
   completedAt,
+  dispatch = null,
 }) {
   if (!ORDER.has(state)) {
     throw new Error(`Unknown publication state: ${state}`);
   }
   if (!provenance || !["NEW_CANONICAL", "HISTORICAL_PRE_CANONICAL"].includes(provenance.classification)) {
     throw new Error("Proof requires provenance.classification of NEW_CANONICAL or HISTORICAL_PRE_CANONICAL");
+  }
+  // FND-0003: the dispatcher's identity triple survives into the durable proof, or is refused.
+  // All-or-nothing: a proof carrying a partial identity would correlate with nothing on the
+  // Site Monitor side while looking like it could, which is worse than carrying none.
+  if (dispatch !== null) {
+    const REQUIRED_DISPATCH = ["jobKey", "idempotencyKey", "correlationId"];
+    for (const field of REQUIRED_DISPATCH) {
+      if (typeof dispatch[field] !== "string" || dispatch[field].trim() === "") {
+        throw new Error(
+          `Proof dispatch identity requires non-empty ${REQUIRED_DISPATCH.join("+")}; missing/empty: ${field}. ` +
+          "Pass the dispatcher's full triple or none at all.",
+        );
+      }
+    }
+    const extra = Object.keys(dispatch).filter((k) => !REQUIRED_DISPATCH.includes(k));
+    if (extra.length) {
+      throw new Error(`Unknown dispatch identity field(s): ${extra.join(", ")}`);
+    }
   }
 
   const proof = {
@@ -97,6 +116,11 @@ export function buildProof({
     siteId,
     occurrence,
     idempotencyKey: idempotencyKey({ laneKey, occurrence }),
+    dispatch: dispatch === null ? null : {
+      jobKey: dispatch.jobKey,
+      idempotencyKey: dispatch.idempotencyKey,
+      correlationId: dispatch.correlationId,
+    },
     state,
     provenance: {
       classification: provenance.classification,

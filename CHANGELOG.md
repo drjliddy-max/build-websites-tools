@@ -7,6 +7,33 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.26.0] - 2026-08-11
+
+Governed repairs of confirmed Blog Writer findings FND-0003 and FND-0005
+(portfolio-os sources/lifecycle; RMD-0003 / RMD-0005, operator-authorized
+implement+PR 2026-08-11). Releases 0.12.0 through 0.25.0 predate this entry;
+their record lives in git tags and the canonicalization log.
+
+### Changed
+- blog-writer proof (FND-0003): optional `dispatch` identity block
+  {jobKey, idempotencyKey, correlationId}, all-or-nothing validated; threaded
+  through every pipeline proof (complete, dry-run, failure).
+- canonical entrypoint (new reference artifact
+  `contracts/blog-writer-entrypoint/runWorkflow.mjs`): consumes the
+  dispatcher's identity flags, passes them into the pipeline, and writes the
+  resulting proof to `--proofOutputPath` on every run so the workflow's
+  truthful-completion step and Site Monitor's artifact verifier read what
+  actually happened.
+- gate-blog-canonical / estateGuard: byte-identity enforcement of consumer
+  entrypoints against the canonical reference (`entrypoint-drift`); signature
+  checks retained.
+- publisher (FND-0005): the publish commit no longer stages the proof path.
+  A truthful proof records the publication's own outcome (including push), so
+  it cannot exist before the commit it describes; durable proof lives in the
+  reporter sink and the uploaded workflow artifact.
+- approvedPins -> ["v0.26.0"]. Merge order: this release first, then the seven
+  consumer restamp PRs (pin bump + entrypoint restamp + workflow updates).
+
 ## [0.11.3] - 2026-08-03
 
 - `fix(conversion-relay)`: **trim env values** before using them. The measurement id and `GA4_API_SECRET` are now read through a trimming accessor. WHY: `jeffrystein.com`'s Vercel Production `NEXT_PUBLIC_GA_MEASUREMENT_ID` held a trailing newline. Untrimmed it became `measurement_id=G-GF3DML4X1Z%0A`; GA4 does not recognise that id, answered `204`, and stored nothing - indistinguishable at the wire from success. Every conversion that site ever relayed was discarded. Proven by runtime instrumentation, then repaired and re-verified end to end (`_audit-vault` F-20260803-01).
