@@ -1,0 +1,53 @@
+{
+  "configVersion": 1,
+  "siteId": "qirofit",
+  "domain": "qirofit.com",
+  "laneKey": "blog-writer-qirofit",
+  "repository": {
+    "owner": "drjliddy-max",
+    "name": "qirofit-web"
+  },
+  "blogPath": "/blog",
+  "keywordSource": {
+    "primary": ".siteclinic/automation/blog-writer-qirofit/keywords/primary.csv",
+    "secondary": ".siteclinic/automation/blog-writer-qirofit/keywords/supporting.csv"
+  },
+  "contentContext": {
+    "audience": "athletes, weekend warriors, endurance athletes (runners, cyclists, marathoners), sports-injury rehab patients, and gym-goers in the Los Angeles area. Patient-booking conversion intent.",
+    "voice": "physician-directed, clinical but approachable, performance-medicine literate. D.C. credential and 20+ years of experience as credibility anchors, not wellness-app aspirational. Performance-medicine vocabulary (range of motion, manual therapy, functional movement assessment, spinal manipulation, progressive loading), not wellness-app vocabulary (journey, transform, holistic, your best self).",
+    "expertise": "Ken Ycmat, D.C., 20+ years in performance and rehabilitation medicine in Los Angeles",
+    "prohibitedTerms": [
+      "wellness journey",
+      "your best self",
+      "transform your life",
+      "holistic lifestyle app",
+      "pain-free",
+      "instant relief",
+      "overnight fix",
+      "permanent fix"
+    ],
+    "forbiddenTopics": [
+      "podiatry and foot surgery, which belong to the Liddy lane",
+      "wellness-app lifestyle coaching",
+      "supplement and nutraceutical recommendations",
+      "weight-loss promise framing",
+      "before and after testimonials"
+    ]
+  },
+  "imagePolicy": {
+    "required": true,
+    "provider": "pexels",
+    "queryHint": "athlete recovery rehabilitation strength conditioning functional movement cycling running marathon"
+  },
+  "publication": {
+    "adapter": "github-repo-commit",
+    "workflowFile": "blog-writer-qirofit-publish.yml",
+    "schedulePath": "blog-schedule.json",
+    "draftDir": ".siteclinic/automation/blog-writer-qirofit/drafts"
+  },
+  "credentials": {
+    "github": "GITHUB_TOKEN",
+    "pexels": "PEXELS_API_KEY"
+  },
+  "monitorKey": "blog-writer-qirofit"
+}
