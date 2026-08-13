@@ -21,6 +21,11 @@ import { checkParticipant } from "../estateGuard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = path.resolve(__dirname, "../../..");
+// Vendored byte-for-byte copy of qirofit-web@origin/main
+// .siteclinic/automation/blog-writer-qirofit/site.config.json. It carries credential NAMES only
+// (GITHUB_TOKEN, PEXELS_API_KEY), never values, so it is safe to commit. Kept honest by
+// "FIXTURE DRIFT" below, which compares it against the real lane wherever that repo is reachable.
+const QIROFIT_CONFIG_FIXTURE = path.join(__dirname, "fixtures/qirofit-site.config.json");
 const CANONICAL_ENTRYPOINT = fs.readFileSync(
   path.join(PKG_ROOT, "contracts/blog-writer-entrypoint/runWorkflow.mjs"), "utf8");
 
@@ -119,6 +124,30 @@ test("guard without a reference keeps prior signature-only behavior (backward co
   assert.deepEqual(r.failures, []);
 });
 
+// ── fixture drift: the vendored config must still match the governed lane ──
+//
+// The integration test below needs the REAL governed config shape, but CI checks out this package
+// alone: a sibling qirofit-web does not exist there, and shelling into one reddened main for two
+// merges (PRs #25, #26). So the config is vendored, and freshness is enforced here instead:
+// wherever qirofit-web IS reachable (any dev machine, the portfolio workspace), a drifted fixture
+// fails loudly. Where it is not, this reports skipped rather than passing on an unmade check.
+test("FIXTURE DRIFT: vendored qirofit config matches qirofit-web@origin/main", (t) => {
+  const lane = path.join(PKG_ROOT, "../qirofit-web");
+  let governed;
+  try {
+    governed = execFileSync("git", ["-C", lane, "show",
+      "origin/main:.siteclinic/automation/blog-writer-qirofit/site.config.json"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    // Not a failure: the sibling checkout is a property of the environment, not of this package.
+    return t.skip(`qirofit-web not reachable at ${lane}; drift unverified in this environment`);
+  }
+  assert.equal(fs.readFileSync(QIROFIT_CONFIG_FIXTURE, "utf8"), governed,
+    "vendored fixture has drifted from the governed lane config; re-vendor it with:\n" +
+    "  git -C ../qirofit-web show origin/main:.siteclinic/automation/blog-writer-qirofit/site.config.json \\\n" +
+    "    > src/blog-writer/__tests__/fixtures/qirofit-site.config.json");
+});
+
 // ── integration: the canonical entrypoint, run for real, correlates end to end ──
 test("INTEGRATION: entrypoint writes the correlated proof to --proofOutputPath and exits 1 on failure", () => {
   // realpath: os.tmpdir() on macOS is a symlink (/var/folders -> /private/var/folders), and the
@@ -128,9 +157,10 @@ test("INTEGRATION: entrypoint writes the correlated proof to --proofOutputPath a
   fs.mkdirSync(laneDir, { recursive: true });
   fs.copyFileSync(path.join(PKG_ROOT, "contracts/blog-writer-entrypoint/runWorkflow.mjs"),
     path.join(laneDir, "runWorkflow.mjs"));
-  // Real governed site config, so registry validation exercises the true shape.
-  const realConfig = execFileSync("git", ["-C", path.join(PKG_ROOT, "../qirofit-web"),
-    "show", "origin/main:.siteclinic/automation/blog-writer-qirofit/site.config.json"], { encoding: "utf8" });
+  // Real governed site config, so registry validation exercises the true shape. Read from the
+  // vendored fixture, NOT a sibling checkout: this suite must run anywhere the package alone is
+  // checked out. Fixture freshness is enforced separately by the drift test below.
+  const realConfig = fs.readFileSync(QIROFIT_CONFIG_FIXTURE, "utf8");
   fs.writeFileSync(path.join(laneDir, "site.config.json"), realConfig);
   const schedulePath = JSON.parse(realConfig).publication.schedulePath;
   fs.mkdirSync(path.dirname(path.join(root, schedulePath)), { recursive: true });
