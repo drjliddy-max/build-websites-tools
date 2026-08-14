@@ -87,7 +87,14 @@ function importInChild(absModulePath: string) {
   return spawnSync(
     process.execPath,
     ["--import", tsxLoader, importerPath, absModulePath],
-    { encoding: "utf8" },
+    // cwd is the throwaway importer dir, NOT this repo. A gate reads
+    // gate.config.json from cwd, so inheriting the repo root would make the
+    // result depend on whether a config happens to sit there: an unguarded gate
+    // could load it, run to completion, and still print IMPORT_OK, leaving this
+    // test green while enforcing nothing. Today the repo root has no
+    // gate.config.json, so the invariant holds by accident; this makes it hold
+    // by construction.
+    { cwd: path.dirname(importerPath), encoding: "utf8" },
   );
 }
 
@@ -134,10 +141,19 @@ describe("gate modules are importable without side effects", () => {
           `guard (see docs/GATE_MODULE_CONTRACT.md).\n` +
           `stdout: ${res.stdout?.trim()}\nstderr: ${res.stderr?.trim()}`,
       );
+      // IMPORT_OK must be the ONLY thing the child printed. A gate that logs a
+      // banner, warns, or scans on import has run side effects even if it exits 0,
+      // so "reached completion" is too weak a bar for an import-safety invariant.
       assert.match(
         res.stdout ?? "",
-        /IMPORT_OK/,
-        `${mod} import did not reach completion`,
+        /^IMPORT_OK\r?\n?$/,
+        `${mod} printed output while being imported, so importing it is not ` +
+          `side-effect free.\nstdout: ${res.stdout?.trim()}`,
+      );
+      assert.equal(
+        (res.stderr ?? "").trim(),
+        "",
+        `${mod} wrote to stderr while being imported.\nstderr: ${res.stderr?.trim()}`,
       );
     });
   }

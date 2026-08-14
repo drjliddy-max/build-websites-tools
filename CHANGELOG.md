@@ -34,8 +34,24 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
   CLI behaviour is unchanged, because `bin/_run.mjs` spawns the `.ts` file as a
   subprocess, so `argv[1]` is the module's own path.
 
+- `gate-ada`: the browser-mode refusal set an exit code and returned instead of
+  exiting immediately. Exiting inside the `try` skipped the `finally` that calls
+  `stopServer()`, orphaning the dev server `ensureBaseUrlReady()` had started.
+  Every consumer sets `launchCommand`, so the leak would have hit exactly the
+  builds the refusal exists to stop. Pinned by a source-structure test.
+  (The same pattern remains on the pre-existing `totalBlocking > 0` path and is
+  tracked separately; it is older than this release and is not repaired here.)
+- `gate-import-safety` test: the child now runs from a throwaway directory rather
+  than inheriting the repo root, and `IMPORT_OK` must be the child's ONLY output.
+  Previously an unguarded gate that found a `gate.config.json` in cwd could run to
+  completion and still be recorded as import-safe.
+
 ### Docs
 - README documents the jsdom degradation explicitly instead of in a parenthetical.
+- `AGENTS.md`: the onboarding `gate:all` example wired only four gates directly and
+  pinned `v0.3.1`. It now matches what every production consumer actually runs
+  (three commands, seven gates, meta-gate included), so a copied example cannot
+  silently drop `gate:sitemap-source` and `gate:dashboard-parity`.
 - `docs/GATE_MODULE_CONTRACT.md`: the dual-role (CLI + library) contract every
   gate module must satisfy, the canonical guard, the two idioms currently in the
   tree, and the test that enforces the invariant.

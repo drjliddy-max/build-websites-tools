@@ -27,16 +27,25 @@ Do NOT use it for:
 1. Read the site's current `package.json` and `gate.config.json` (if any).
 2. Add the dependency:
    ```bash
-   npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.3.1"
+   npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.27.0"
    ```
-3. Add scripts to `package.json`:
+3. Add scripts to `package.json`. This is the wiring every production consumer
+   runs: `gate:all` is THREE commands that run SEVEN gates, because
+   `gate:dashboard-parity` is a meta-gate that spawns `gate-ada`, `gate-seo`,
+   `gate-ai-instrumentation-source` and `gate-conversion-instrumentation-source`
+   as child processes. Do not "simplify" it by listing the leaves directly and
+   dropping the meta-gate: that silently removes `gate:sitemap-source` and the
+   parity check itself.
    ```json
    "scripts": {
      "gate:ada": "gate-ada",
      "gate:seo": "gate-seo",
      "gate:ai-instrumentation": "gate-ai-instrumentation",
      "gate:ai-instrumentation-source": "gate-ai-instrumentation-source",
-     "gate:all": "npm run gate:ada && npm run gate:seo && npm run gate:ai-instrumentation-source && npm run gate:ai-instrumentation",
+     "gate:conversion-instrumentation-source": "gate-conversion-instrumentation-source",
+     "gate:sitemap-source": "gate-sitemap-source",
+     "gate:dashboard-parity": "gate-dashboard-parity",
+     "gate:all": "npm run gate:sitemap-source && npm run gate:dashboard-parity && npm run gate:ai-instrumentation",
      "prebuild": "npm run gate:all"
    }
    ```

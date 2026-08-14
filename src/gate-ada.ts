@@ -135,7 +135,12 @@ async function main() {
     const refusal = browserModeRefusal(scanMode, config);
     if (refusal !== null) {
       console.error(refusal);
-      process.exit(1);
+      // Set the code and return rather than exiting here: an immediate exit skips
+      // the finally below, orphaning the dev server ensureBaseUrlReady() started.
+      // Every consumer sets launchCommand, so that leak would be the common case
+      // for exactly the builds this refusal exists to stop.
+      process.exitCode = 1;
+      return;
     }
 
     if (scanMode === "html-snapshot") {

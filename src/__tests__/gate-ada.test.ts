@@ -18,6 +18,7 @@
  * would mean uninstalling the browser.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { browserModeRefusal } from "../gate-ada";
 
@@ -57,5 +58,47 @@ describe("browserModeRefusal", () => {
       ada: { requireBrowserMode?: boolean };
     };
     assert.equal(browserModeRefusal("html-snapshot", notOptedIn), null);
+  });
+});
+
+describe("refusal cleanup contract", () => {
+  // Source assertion rather than a live run: reaching the refusal branch for real
+  // requires an environment with no Chromium, which a developer machine cannot
+  // reach by accident (same reason the tests above target the helper). The leak is
+  // structural, so the structure is what gets asserted.
+  //
+  // The bug this pins: ensureBaseUrlReady() starts a dev server and the only
+  // stopServer() call lives in main()'s finally. process.exit() does not run
+  // finally blocks, so exiting inside the try orphans that server. Every consumer
+  // sets launchCommand, so this would have leaked on exactly the builds the
+  // refusal exists to stop.
+  const rawSource = readFileSync(new URL("../gate-ada.ts", import.meta.url), "utf8");
+  // Strip comments before asserting: this file explains WHY the branch must not
+  // call process.exit, and that prose would otherwise match the very pattern the
+  // assertion forbids. Assert on code, never on the commentary about the code.
+  const source = rawSource
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  it("the refusal branch does not process.exit inside the try", () => {
+    const branch = source.slice(
+      source.indexOf("const refusal = browserModeRefusal("),
+      source.indexOf("if (scanMode === \"html-snapshot\")"),
+    );
+    assert.ok(branch.length > 0, "refusal branch not found; update this test");
+    assert.ok(
+      !/process\.exit\(/.test(branch),
+      "refusal branch calls process.exit(), which skips the finally that stops the dev server",
+    );
+    assert.match(branch, /process\.exitCode\s*=\s*1/, "refusal must still fail the build");
+    assert.match(branch, /\breturn\b/, "refusal must return so finally runs");
+  });
+
+  it("main still stops the server in a finally", () => {
+    assert.match(
+      source,
+      /finally\s*\{\s*await stopServer\(\);/,
+      "the finally that stops the dev server must survive",
+    );
   });
 });
