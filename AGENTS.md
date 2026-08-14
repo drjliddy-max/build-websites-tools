@@ -27,16 +27,25 @@ Do NOT use it for:
 1. Read the site's current `package.json` and `gate.config.json` (if any).
 2. Add the dependency:
    ```bash
-   npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.3.1"
+   npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.27.0"
    ```
-3. Add scripts to `package.json`:
+3. Add scripts to `package.json`. This is the wiring every production consumer
+   runs: `gate:all` is THREE commands that run SEVEN gates, because
+   `gate:dashboard-parity` is a meta-gate that spawns `gate-ada`, `gate-seo`,
+   `gate-ai-instrumentation-source` and `gate-conversion-instrumentation-source`
+   as child processes. Do not "simplify" it by listing the leaves directly and
+   dropping the meta-gate: that silently removes `gate:sitemap-source` and the
+   parity check itself.
    ```json
    "scripts": {
      "gate:ada": "gate-ada",
      "gate:seo": "gate-seo",
      "gate:ai-instrumentation": "gate-ai-instrumentation",
      "gate:ai-instrumentation-source": "gate-ai-instrumentation-source",
-     "gate:all": "npm run gate:ada && npm run gate:seo && npm run gate:ai-instrumentation-source && npm run gate:ai-instrumentation",
+     "gate:conversion-instrumentation-source": "gate-conversion-instrumentation-source",
+     "gate:sitemap-source": "gate-sitemap-source",
+     "gate:dashboard-parity": "gate-dashboard-parity",
+     "gate:all": "npm run gate:sitemap-source && npm run gate:dashboard-parity && npm run gate:ai-instrumentation",
      "prebuild": "npm run gate:all"
    }
    ```
@@ -88,10 +97,13 @@ This is enforced by the gate; no opt-out flag exists. The check is in `src/load-
 - Never re-implement a gate inside the consuming site's `scripts/` directory. Extend the shared gate in this package via PR.
 - Never copy `src/` from this repo into the consuming site. The whole point of the package is that vendoring is over.
 - Never edit files under `node_modules/build-websites-tools/`. Edits do not survive `npm install`.
+- **Never call `main()` at the top level of a `src/gate-*.ts` module.** Every gate is both a CLI and a library: `bin/_run.mjs` spawns it as a subprocess, and the tests import it for its exported helpers. An unguarded `main()` runs the entire gate on import, which makes the module untestable. Guard it with the canonical direct-invocation check in [`docs/GATE_MODULE_CONTRACT.md`](./docs/GATE_MODULE_CONTRACT.md). Enforced by `src/__tests__/gate-import-safety.test.ts`.
+- **Do not conclude a gate is unwired from `package.json` scripts.** `gate:all` names three commands and runs seven: `gate-dashboard-parity` is a meta-gate that spawns four leaves. Three separate sessions have now filed false "this gate runs nowhere" findings from a scripts grep, one of which proposed changing seven production repos for work that did not exist. Read the gate table in `README.md#the-gate-set`, or a real build log.
 
 ## Where to read more
 
 - `README.md`: full feature list, schema, install.
+- `docs/GATE_MODULE_CONTRACT.md`: the CLI-plus-library contract every gate module must satisfy, the canonical entry-point guard, and the test that enforces it. **Read before adding or editing a gate.**
 - `CLAUDE.md`: Claude-Code-specific notes if you are running as Claude.
 - `llms.txt`: structured summary for AI ingestion.
 - `templates/`: copyable `gate.config.json` shapes.

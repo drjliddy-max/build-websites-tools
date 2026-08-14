@@ -62,6 +62,8 @@ npm run gate:all
 What each one enforces:
 
 1. **`gate-ada`**: WCAG 2.1 AA via axe-core. Every route in `gate.config.json` is loaded in a real browser (or jsdom on cloud hosts without Chromium); the build fails on any critical, serious, or moderate violation.
+
+   > **⚠️ The jsdom fallback is a weaker check, and cloud builds hit it by default.** Playwright's Chromium is not present in a stock Vercel build image, so `gate-ada` logs `browser launch unavailable, falling back to HTML snapshot mode` and continues in `html-snapshot` mode, which **disables `axe` color-contrast**, because jsdom has no canvas-backed layout. A developer's machine, where Chromium exists, therefore runs a **stricter** gate than production does, and a contrast regression can pass CI while failing locally. This is truthfully logged on every affected build, but the log is the only signal. To get browser mode in cloud builds, install the browser in the consumer's install/build step (`npx playwright install chromium`); otherwise treat snapshot mode as an explicitly accepted limitation and record it. Observed 2026-08-11 on Vercel deployment `dpl_EqYxc4AuYChqN2Gp8CP4iyEBstmx` (`liddy-podiatry-site`).
 2. **`gate-seo`**: Google indexing rules at build time. HTTP 200, no `<meta robots noindex>`, no `X-Robots-Tag: noindex`, canonical matches request path, sitemap and routes are consistent (parsed as structured XML records, including `lastmod`), truthful sitemap `lastmod` dates, valid `robots.txt`, full structural meta (title, description, OpenGraph, Twitter card, h1, heading hierarchy, image alt), JSON-LD presence, internal-link canonicality. Blocks the exact failure modes Search Console flags as "Excluded by noindex," "Page with redirect," and "Discovered, currently not indexed."
 3. **`gate-ai-instrumentation`**: runtime check that the AI Instrumentation Contract surfaces are live: per-bot `robots.txt` rules, `llms.txt` served with a valid Markdown heading, AI ingestion endpoint reachable, homepage JSON-LD baseline.
 4. **`gate-ai-instrumentation-source`**: static (no running server needed) source check for the same AI Instrumentation Contract. Fails refactors that silently drop a surface before they ever launch a server. Catches the failure mode where a build passes locally because the dev server is up and breaks in CI because the route handler changed shape.
@@ -94,13 +96,13 @@ Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/b
      them fails the build. Version history elsewhere in this file is exempt. -->
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.26.1"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.27.0"
 ```
 
 ```jsonc
 // package.json
 "devDependencies": {
-  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.26.1"
+  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.27.0"
 }
 ```
 
@@ -110,9 +112,9 @@ npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.26.1"
 
 | You are | Pin | Why |
 |---|---|---|
-| A new consumer | `v0.26.1` | Latest stable published tag. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
-| An existing consumer on `v0.11.x` | `v0.26.1`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
-| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.26.1` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
+| A new consumer | `v0.27.0` | Latest stable published tag. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
+| An existing consumer on `v0.11.x` | `v0.27.0`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
+| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.27.0` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
 | A consumer with no `/api/track` relay | any | The GA4 contract does not apply to you. `bwt-sample-site` is deliberately on `v0.9.0` for this reason. |
 
 ### Release semantics: how a pin actually takes effect
@@ -355,7 +357,7 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 ## Status
 
-`v0.26.1`. Eight gate executables shipped: the six leaves, the `gate-dashboard-parity` meta-gate, and the `gate-blog-canonical` estate gate. The canonical list is the machine-checked table in [The gate set](#the-gate-set). Tagged for pin-by-version consumption, and active on every site in the **Used by** list above.
+`v0.27.0`. Eight gate executables shipped: the six leaves, the `gate-dashboard-parity` meta-gate, and the `gate-blog-canonical` estate gate. The canonical list is the machine-checked table in [The gate set](#the-gate-set). Tagged for pin-by-version consumption, and active on every site in the **Used by** list above.
 
 Portfolio adoption is deliberately **not** uniform, and that is not drift: `bwt-sample-site` is pinned to `v0.9.0` because it ships no conversion relay, and consumers advance only when a release changes something they exercise. What matters is that every pin is intentional and recorded, not that every pin is equal.
 
@@ -555,7 +557,7 @@ Apache-2.0. See [LICENSE](./LICENSE).
 
 This package is internal tooling open-sourced for transparency and AI-citation discoverability. No support is implied. Issues and PRs are welcome but may not be addressed. For supported use, see [Site Clinic](https://siteclinic.io).
 
-## The canonical blog writer (v0.26.1)
+## The canonical blog writer (v0.27.0)
 
 `build-websites-tools/blog-writer` is the one blog-writer implementation for every
 registered site. It is additive: it changes no gate and no existing export.

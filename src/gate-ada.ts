@@ -14,12 +14,14 @@
  * Operator extension 2026-05-11: stricter than doctrine. Zero blocking
  * violations required, not "issues triaged."
  */
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import axe from "axe-core";
 import AxeBuilder from "@axe-core/playwright";
 import { JSDOM } from "jsdom";
 import { chromium, type Browser, type Page } from "playwright";
 import { ensureBaseUrlReady } from "./ensure-base-url";
-import { loadGateConfig } from "./load-config";
+import { loadGateConfig, type GateConfig } from "./load-config";
 
 type Impact = "critical" | "serious" | "moderate" | "minor";
 const BLOCKING_IMPACTS: Impact[] = ["critical", "serious", "moderate"];
@@ -92,6 +94,30 @@ async function analyzeWithSnapshot(url: string): Promise<AxeResults> {
   }
 }
 
+/**
+ * Decide whether a missing browser is a fallback or a failure.
+ *
+ * Split out from main() so the decision is unit-testable: the branch that matters
+ * only fires when Chromium is absent, which is precisely the environment a test on
+ * a developer machine (where Chromium is present) can never reach by accident.
+ *
+ * Returns null when the run may proceed, or the operator-facing failure message.
+ */
+export function browserModeRefusal(
+  scanMode: "browser" | "html-snapshot",
+  config: Pick<GateConfig, "ada">,
+): string | null {
+  if (scanMode === "browser") return null;
+  if (config.ada?.requireBrowserMode !== true) return null;
+  return [
+    "gate:ada  FAIL: ada.requireBrowserMode is true but Chromium could not be launched.",
+    "gate:ada  Refusing to fall back to html-snapshot mode, which cannot run axe color-contrast",
+    "gate:ada  and would report a weaker result than a developer sees locally.",
+    "gate:ada  Fix: run `npx playwright install chromium` in this project's install/build step,",
+    "gate:ada  or set ada.requireBrowserMode to false to accept snapshot mode explicitly.",
+  ].join("\n");
+}
+
 async function main() {
   const config = loadGateConfig();
   const { routes, baseUrl } = config;
@@ -105,6 +131,18 @@ async function main() {
     const perRouteResults: Array<{ route: string; blocking: number; minor: number }> = [];
 
     console.log(`gate:ada  mode ${scanMode}`);
+
+    const refusal = browserModeRefusal(scanMode, config);
+    if (refusal !== null) {
+      console.error(refusal);
+      // Set the code and return rather than exiting here: an immediate exit skips
+      // the finally below, orphaning the dev server ensureBaseUrlReady() started.
+      // Every consumer sets launchCommand, so that leak would be the common case
+      // for exactly the builds this refusal exists to stop.
+      process.exitCode = 1;
+      return;
+    }
+
     if (scanMode === "html-snapshot") {
       console.log(
         "gate:ada  html-snapshot fallback disables axe color-contrast because JSDOM does not provide canvas-backed visual layout APIs.",
@@ -193,9 +231,18 @@ async function main() {
   }
 }
 
-try {
-  await main();
-} catch (err) {
-  console.error(err);
-  process.exit(1);
+// Self-execute ONLY when invoked directly, so tests can import the policy helper
+// (browserModeRefusal) without loading gate.config.json and launching a scan.
+// Mirrors the guard gate-dashboard-parity.ts already uses; before this, importing
+// this module ran the whole gate as a side effect.
+const invokedDirectly =
+  !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) {
+  try {
+    await main();
+  } catch (err) {
+    console.error(err);
+    process.exit(1);
+  }
 }

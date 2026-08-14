@@ -8,7 +8,7 @@ This is `build-websites-tools`, a build-time enforcement gate package consumed b
 
 ## When asked to modify this repo
 
-1. Read the README first. It states what the package is, what each gate enforces, and the schema for `gate.config.json`.
+1. Read the README first. It states what the package is, what each gate enforces, and the schema for `gate.config.json`. Note the gate table: **`gate:all` is three commands and runs seven gates**, because `gate-dashboard-parity` is a meta-gate that spawns four leaves. Do not infer from a consuming site's `scripts` block that a gate is unwired; three sessions have filed that false finding.
 2. Read `AGENTS.md` for the standard onboarding flow.
 3. Read the source of the specific gate before modifying it: `src/gate-ada.ts`, `src/gate-seo.ts`, `src/gate-ai-instrumentation.ts`, `src/gate-ai-instrumentation-source.ts`, `src/load-config.ts`.
 4. Run the tests: `npm test`. They live in `src/__tests__/` and use the Node test runner.
@@ -20,7 +20,7 @@ A new gate is appropriate when there is a class of production regression that af
 
 When adding a gate:
 
-1. Implement under `src/gate-<name>.ts`. Export a function the bin can call.
+1. Implement under `src/gate-<name>.ts`. Export a function the bin can call. **Guard the entry point** so `main()` runs only under direct invocation, and export the policy helper the tests will call: see [`docs/GATE_MODULE_CONTRACT.md`](./docs/GATE_MODULE_CONTRACT.md). A gate that calls `main()` at top level runs the whole gate on import and cannot be unit-tested; `src/__tests__/gate-import-safety.test.ts` fails the build if you skip this.
 2. Add the bin wrapper at `bin/gate-<name>.mjs` that loads the gate via tsx and exits with the gate's status.
 3. Update `package.json` `bin` field to register the new gate.
 4. Add tests under `src/__tests__/gate-<name>.test.ts`. Test the positive path, the negative path, and at least one edge case.

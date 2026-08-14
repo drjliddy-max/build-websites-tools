@@ -7,6 +7,55 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.27.0] - 2026-08-13
+
+### Added
+- `gate-ada`: `ada.requireBrowserMode` in `gate.config.json`. When true, the gate
+  FAILS if Playwright's Chromium cannot launch instead of silently continuing in
+  jsdom `html-snapshot` mode, which cannot run axe color-contrast. Defaults to
+  **false**, so no consumer changes behaviour. A stock cloud build image ships no
+  browser, so enabling it without also running `npx playwright install chromium`
+  in that consumer's install step would fail every build; that is why it cannot
+  be the default. Rationale: production was running a strictly weaker
+  accessibility gate than any developer machine, announced only in a build-log
+  line. Observed on Vercel deployment `dpl_EqYxc4AuYChqN2Gp8CP4iyEBstmx`.
+- `src/__tests__/gate-import-safety.test.ts`: repository-wide invariant that every
+  `src/gate-*.ts` is importable without side effects, enforced per module in a
+  child process. Carries a self-cleaning exception set: a listed module must still
+  be broken, so a fix cannot leave a stale amnesty behind. `gate-seo.ts` is listed
+  (pre-existing, classified separately, not repaired here).
+- `src/__tests__/gate-ada.test.ts`: first unit tests this gate has ever had.
+
+### Fixed
+- `gate-ada`: the module called `main()` at top level, so importing it executed
+  the entire gate (config load, server launch, route scan, `process.exit`). That
+  is why it was the only gate with no test file: writing one was impossible. Now
+  guarded by the same direct-invocation check `gate-dashboard-parity` uses.
+  CLI behaviour is unchanged, because `bin/_run.mjs` spawns the `.ts` file as a
+  subprocess, so `argv[1]` is the module's own path.
+
+- `gate-ada`: the browser-mode refusal set an exit code and returned instead of
+  exiting immediately. Exiting inside the `try` skipped the `finally` that calls
+  `stopServer()`, orphaning the dev server `ensureBaseUrlReady()` had started.
+  Every consumer sets `launchCommand`, so the leak would have hit exactly the
+  builds the refusal exists to stop. Pinned by a source-structure test.
+  (The same pattern remains on the pre-existing `totalBlocking > 0` path and is
+  tracked separately; it is older than this release and is not repaired here.)
+- `gate-import-safety` test: the child now runs from a throwaway directory rather
+  than inheriting the repo root, and `IMPORT_OK` must be the child's ONLY output.
+  Previously an unguarded gate that found a `gate.config.json` in cwd could run to
+  completion and still be recorded as import-safe.
+
+### Docs
+- README documents the jsdom degradation explicitly instead of in a parenthetical.
+- `AGENTS.md`: the onboarding `gate:all` example wired only four gates directly and
+  pinned `v0.3.1`. It now matches what every production consumer actually runs
+  (three commands, seven gates, meta-gate included), so a copied example cannot
+  silently drop `gate:sitemap-source` and `gate:dashboard-parity`.
+- `docs/GATE_MODULE_CONTRACT.md`: the dual-role (CLI + library) contract every
+  gate module must satisfy, the canonical guard, the two idioms currently in the
+  tree, and the test that enforces the invariant.
+
 ## [0.26.1] - 2026-08-11
 
 FND-0008 repair, BWT half (RMD-0007, operator option (a), authorized 2026-08-11).
