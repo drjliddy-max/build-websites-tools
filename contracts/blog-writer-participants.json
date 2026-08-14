@@ -2,7 +2,8 @@
   "manifestVersion": 1,
   "contract": "publication-14d-v1",
   "approvedPins": [
-    "v0.26.1"
+    "v0.26.1",
+    "v0.27.0"
   ],
   "participants": [
     {
