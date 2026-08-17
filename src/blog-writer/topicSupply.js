@@ -1,15 +1,21 @@
 /**
  * Topic supply.
  *
- * A lane must not deadlock permanently because a two-row CSV ran out. That is
- * the state `bmj` and `jeffrystein` are in: two primary keywords each, both
- * already published, so `resolve-topic` fails and no occurrence can ever be
- * prepared again.
+ * A lane must not deadlock permanently because a short keyword CSV ran out.
+ * A lane whose primary keywords are all published has no topic to resolve, and
+ * without replenishment no occurrence can ever be prepared for it again.
  *
  * The fix is a supply chain, not a hand-added row. Primary keywords are used
  * first and exactly once. When they are exhausted, candidates are derived from
  * the site's configured secondary sources, checked against everything already
  * published, and only then admitted.
+ *
+ * Deliberately no lane names here. Inventory state is data, not architecture:
+ * it changes every time a lane publishes or an operator extends a keyword file.
+ * An earlier version of this comment named two specific lanes as deadlocked;
+ * by 2026-08-16 one of them was resolving normally from cluster supply and a
+ * different lane was the exhausted one, so the comment described a state that
+ * no longer existed. Run the resolver against current files to learn the truth.
  *
  * PROVENANCE IS RECORDED, NOT INFERRED
  *
