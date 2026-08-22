@@ -550,6 +550,47 @@ test("pipeline: an off-cadence occurrence is refused", async () => {
   assert.match(result.proof.failure.reason, /not on the publication-14d-v1 lattice/);
 });
 
+// ── 2026-08-22 estate incident: the dispatcher and this publisher must agree ──
+// Production state on every consumer: published 08-08 (acceptance post),
+// schedule.cadence_anchor 2026-08-13. The lattice is 08-27, 09-10, …
+const PRODUCTION_SCHEDULE = {
+  schedule: { cadence: "tuesday_thursday", cadence_anchor: "2026-08-13" },
+  published: [{ slug: "prior", title: "A prior article", target_date: "2026-08-08", keywords: ["other"] }],
+  queue: []
+};
+for (const occurrence of ["2026-08-22", "2026-08-25"]) {
+  test(`pipeline: ${occurrence} is refused against the explicit 2026-08-13 anchor (resolve-occurrence)`, async () => {
+    const deps = pipelineDeps({ modelOutput: "{}", schedule: PRODUCTION_SCHEDULE });
+    const result = await runBlogWriterPipeline({ siteId: "qirofit", occurrence, mode: "dry-run" }, deps);
+    assert.equal(result.ok, false);
+    assert.equal(result.state, "FAILED");
+    assert.equal(result.proof.failure.stage, "resolve-occurrence");
+    assert.match(result.proof.failure.reason, /not on the publication-14d-v1 lattice \(anchor 2026-08-13/);
+  });
+}
+for (const occurrence of ["2026-08-27", "2026-09-10"]) {
+  test(`pipeline: ${occurrence} is accepted against the explicit 2026-08-13 anchor (subject to every later gate)`, async () => {
+    const deps = pipelineDeps({
+      modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
+      schedule: PRODUCTION_SCHEDULE
+    });
+    const result = await runBlogWriterPipeline({ siteId: "qirofit", occurrence, mode: "dry-run" }, deps);
+    assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
+    const resolved = result.stages.find((s) => s.stage === "resolve-occurrence");
+    assert.ok(resolved, "resolve-occurrence stage recorded");
+    assert.equal(resolved.detail.anchor, "2026-08-13", "the explicit anchor is the clock");
+    assert.equal(resolved.detail.occurrence, occurrence);
+  });
+}
+test("pipeline: steady state after the first canonical publication - 09-10 accepted with cadence_anchor still 08-13", async () => {
+  const schedule = { ...PRODUCTION_SCHEDULE, published: [...PRODUCTION_SCHEDULE.published, { slug: "first-canonical", title: "First canonical", target_date: "2026-08-27", keywords: ["x"] }] };
+  const deps = pipelineDeps({
+    modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
+    schedule
+  });
+  const result = await runBlogWriterPipeline({ siteId: "qirofit", occurrence: "2026-09-10", mode: "dry-run" }, deps);
+  assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
+});
 test("pipeline: an unregistered site cannot run", async () => {
   const deps = pipelineDeps({ modelOutput: "{}", schedule: ANCHORED_SCHEDULE });
   const result = await runBlogWriterPipeline(

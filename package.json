@@ -1,6 +1,6 @@
 {
   "name": "build-websites-tools",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "type": "module",
   "exports": {
     "./related-content": {
@@ -21,6 +21,9 @@
     },
     "./blog-writer": {
       "default": "./src/blog-writer/index.js"
+    },
+    "./blog-writer/cadence": {
+      "default": "./src/blog-writer/cadence.js"
     }
   },
   "description": "Build-time enforcement gates for production websites: WCAG 2.1 AA accessibility, Google indexing rules, and the MASTER_VISIBILITY_MATRIX AI Instrumentation Contract. One package, every site, no drift.",

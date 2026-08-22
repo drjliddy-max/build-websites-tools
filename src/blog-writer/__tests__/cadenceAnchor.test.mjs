@@ -50,3 +50,41 @@ test("NEGATIVE: an invalid explicit anchor throws rather than being silently ign
     );
   }
 });
+
+// ── 2026-08-22 estate incident follow-ups ────────────────────────────────────
+// After the first canonical publication the schedule still declares
+// cadence_anchor 2026-08-13 while published target_dates advance by 14n. That is
+// the same lattice; refusing it would fail every lane's SECOND occurrence.
+test("steady state: an explicit anchor earlier than a later publication ON ITS OWN LATTICE is accepted", () => {
+  const afterFirst = { schedule: { cadence_anchor: "2026-08-13" }, published: [{ target_date: "2026-08-08" }, { target_date: "2026-08-27" }] };
+  assert.equal(resolveCadenceAnchor(afterFirst), "2026-08-13");
+  const afterSecond = { schedule: { cadence_anchor: "2026-08-13" }, published: [{ target_date: "2026-08-27" }, { target_date: "2026-09-10" }] };
+  assert.equal(resolveCadenceAnchor(afterSecond), "2026-08-13");
+  assert.equal(isGovernedTargetDate("2026-08-13", "2026-09-24"), true);
+});
+
+test("NEGATIVE: an earlier explicit anchor OFF the history's lattice is still refused", () => {
+  // 2026-08-13 -> 2026-08-25 is 12 days: not a lattice step. This would rewrite history.
+  assert.throws(
+    () => resolveCadenceAnchor({ schedule: { cadence_anchor: "2026-08-13" }, published: [{ target_date: "2026-08-25" }] }),
+    /not on its lattice/,
+  );
+});
+
+test("the Tue 08-25 / Thu 08-27 matrix against the production anchor", () => {
+  const anchor = resolveCadenceAnchor({ schedule: { cadence_anchor: "2026-08-13" }, published: [{ target_date: "2026-08-08" }] });
+  assert.equal(anchor, "2026-08-13");
+  assert.equal(isGovernedTargetDate(anchor, "2026-08-22"), false, "Sat 08-22 is NOT an occurrence (today's invalid projection)");
+  assert.equal(isGovernedTargetDate(anchor, "2026-08-25"), false, "Tue 08-25 is NOT an occurrence (12 days)");
+  assert.equal(isGovernedTargetDate(anchor, "2026-08-27"), true, "Thu 08-27 IS the due occurrence");
+  assert.equal(isGovernedTargetDate(anchor, "2026-09-10"), true);
+  assert.equal(isGovernedTargetDate(anchor, "2026-08-29"), false, "16 days elapsed is not a due date");
+});
+
+test("the canonical cadence primitive is importable by subpath without the publisher index", async () => {
+  const mod = await import("build-websites-tools/blog-writer/cadence");
+  assert.equal(typeof mod.resolveCadenceAnchor, "function");
+  assert.equal(typeof mod.isGovernedTargetDate, "function");
+  assert.equal(mod.PUBLICATION_INTERVAL_DAYS, 14);
+  assert.equal(mod.CADENCE_MIGRATION_ACTIVATION_DATE, "2026-08-13");
+});
