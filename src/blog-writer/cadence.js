@@ -46,7 +46,7 @@ export const SUPERSEDED_CADENCE_CONTRACT_ID = "tuesday_thursday";
  * The ONLY date on which a cohort lane may establish its first
  * publication-14d-v1 anchor. Mirrors `migration.activationDate`.
  */
-export const CADENCE_MIGRATION_ACTIVATION_DATE = "2026-08-08";
+export const CADENCE_MIGRATION_ACTIVATION_DATE = "2026-08-13";
 
 const MS_PER_DAY = 86_400_000;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -112,8 +112,17 @@ export function resolveCadenceAnchor(schedule) {
     throw new Error(`Invalid cadence_anchor: ${JSON.stringify(explicit)} (expected YYYY-MM-DD)`);
   }
   if (derived !== null && explicit < derived) {
+    // STEADY STATE after the first canonical publication: the schedule keeps
+    // `cadence_anchor` (e.g. 2026-08-13) while published target_dates advance
+    // by 14n (2026-08-27, 09-10, …). That is the SAME clock, not a re-base, and
+    // must be accepted - before this rule, the second canonical occurrence
+    // would have thrown here. Only an earlier anchor OFF the history's lattice
+    // rewrites history and is refused.
+    if (daysBetween(explicit, derived) % PUBLICATION_INTERVAL_DAYS === 0) {
+      return explicit;
+    }
     throw new Error(
-      `cadence_anchor ${explicit} is earlier than the latest real publication ${derived}; ` +
+      `cadence_anchor ${explicit} is earlier than the latest real publication ${derived} and not on its lattice; ` +
       "re-basing may only move the lattice forward, never rewrite history.",
     );
   }

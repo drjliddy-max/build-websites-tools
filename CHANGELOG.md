@@ -7,6 +7,34 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
+## [0.28.0] - 2026-08-22
+
+### Fixed
+- `blog-writer/cadence`: `resolveCadenceAnchor` now ACCEPTS an explicit
+  `schedule.cadence_anchor` that is earlier than the latest real publication
+  when that publication sits ON the anchor's own lattice (anchor + 14n). That is
+  the steady state after the first canonical publication - the schedule keeps
+  `cadence_anchor: 2026-08-13` while `published[].target_date` advances to
+  2026-08-27, 09-10, … - and v0.26.1-v0.27.0 threw
+  "re-basing may only move the lattice forward" there, which would have failed
+  the SECOND canonical occurrence of every lane. Only an earlier anchor OFF the
+  history's lattice still throws. Found while repairing the 2026-08-22 estate
+  incident (site-monitor PR #205): the dispatcher, the canonical publisher and
+  consumer readiness were computing three different calendars.
+- `blog-writer/cadence`: `CADENCE_MIGRATION_ACTIVATION_DATE` mirror constant
+  updated to `2026-08-13` (the re-authorised window in
+  site-monitor `contracts/publication-cadence.json`); it was still `2026-08-08`.
+
+### Added
+- Package subpath export `build-websites-tools/blog-writer/cadence` so a
+  consumer's readiness script (or any governance check) can import the
+  canonical cadence primitive WITHOUT loading the generator/publisher index.
+  Consumers' lane-local `cadence.mjs` should re-export from it rather than
+  carry a copy - one publication clock.
+- Tests: the Tue 2026-08-25 / Thu 2026-08-27 matrix through the pipeline
+  (`resolve-occurrence` refuses 08-25 and 08-22 against an explicit 08-13
+  anchor; accepts 08-27 and 09-10), and the steady-state acceptance above.
+
 ## [0.27.0] - 2026-08-13
 
 ### Added
