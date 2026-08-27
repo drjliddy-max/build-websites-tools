@@ -511,6 +511,10 @@ function pipelineDeps({ modelOutput, schedule, sink = createInMemoryTestSink() }
     reporter: createDurableReporter({ sink }),
     verifier: { check: async () => ({ status: 200 }) },
     publisher: { publish: async () => ({ commitSha: "deadbeef" }) },
+    // Tests never wait for a deploy: zero budgets make waitForLiveUrl check
+    // exactly once, and an injected sleep would fail loudly if ever reached.
+    verifyPolicy: { deployBudgetMs: 0, idempotentBudgetMs: 0, intervalMs: 1 },
+    sleep: async () => { throw new Error("tests must not sleep in live verification"); },
     _sink: sink
   };
 }
@@ -1022,4 +1026,89 @@ test("COMPOSITION: acquisition path and publisher path agree on layout", async (
   assert.equal(imagePublicPath(filename), "/photos/" + filename);
   assert.equal("public" + imagePublicPath(filename), adapter.imagePath(filename),
     "a drift between these two silently publishes a broken image reference");
+});
+
+// ── idempotent recovery contract (2026-08-27 estate incident) ──────────────
+//
+// Six lanes published correctly, failed only verify-live against a
+// still-deploying site, and their retries hit an idempotent branch that
+// returned a stale-or-null proof carrying the WRONG dispatch identity. The
+// recovery contract: a re-run of a published occurrence re-verifies the live
+// article and mints a FRESH proof bound to THIS dispatch.
+
+const RECOVERY_DISPATCH = {
+  jobKey: "blog-writer-qirofit",
+  idempotencyKey: "blog-writer-qirofit:2026-08-22:1",
+  correlationId: "retry-attempt-2-correlation",
+};
+
+test("recovery: a re-run of a published occurrence re-verifies and binds the CURRENT dispatch", async () => {
+  let generationCalled = false;
+  const deps = pipelineDeps({
+    modelOutput: "{}",
+    schedule: {
+      published: [{ slug: "already", title: "Already there", target_date: "2026-08-22" }],
+      queue: [],
+    },
+  });
+  deps.provider = { id: "stub", model: "stub-1", complete: async () => { generationCalled = true; return "{}"; } };
+  const checked = [];
+  deps.verifier = { check: async (url) => { checked.push(url); return { status: 200 }; } };
+
+  const result = await runBlogWriterPipeline(
+    { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish", dispatch: RECOVERY_DISPATCH },
+    deps,
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.idempotentNoOp, true);
+  assert.equal(generationCalled, false, "recovery must not generate a second article");
+  assert.equal(result.proof.state, "COMPLETE");
+  assert.equal(result.proof.provenance.classification, "NEW_CANONICAL");
+  assert.deepEqual(result.proof.dispatch, RECOVERY_DISPATCH, "the proof must carry THIS dispatch, not attempt 1's");
+  assert.equal(checked.length, 1);
+  assert.match(checked[0], /\/already$/);
+});
+
+test("recovery: a published occurrence whose article does not serve fails truthfully at verify-live", async () => {
+  const deps = pipelineDeps({
+    modelOutput: "{}",
+    schedule: {
+      published: [{ slug: "already", title: "Already there", target_date: "2026-08-22" }],
+      queue: [],
+    },
+  });
+  deps.verifier = { check: async () => ({ status: 404 }) };
+
+  const result = await runBlogWriterPipeline(
+    { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish", dispatch: RECOVERY_DISPATCH },
+    deps,
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.proof.state, "FAILED");
+  assert.equal(result.proof.failure.stage, "verify-live");
+  assert.match(result.proof.failure.reason, /HTTP 404/);
+  assert.deepEqual(result.proof.dispatch, RECOVERY_DISPATCH);
+});
+
+test("verify-live waits out the consumer deploy instead of racing it", async () => {
+  const statuses = [404, 404, 200, 200];
+  let sleeps = 0;
+  const deps = pipelineDeps({
+    modelOutput: modelResponse({ title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription, imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6) }),
+    schedule: ANCHORED_SCHEDULE,
+  });
+  deps.verifier = { check: async () => ({ status: statuses.shift() ?? 200 }) };
+  deps.verifyPolicy = { deployBudgetMs: 1000, idempotentBudgetMs: 1000, intervalMs: 1 };
+  deps.sleep = async () => { sleeps += 1; };
+
+  const result = await runBlogWriterPipeline(
+    { siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" },
+    deps,
+  );
+
+  assert.equal(result.ok, true, JSON.stringify(result.proof?.failure ?? null));
+  assert.equal(result.state, "COMPLETE");
+  assert.equal(sleeps, 2, "two 404s before the deploy finished = two bounded waits");
 });

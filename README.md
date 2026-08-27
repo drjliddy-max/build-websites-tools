@@ -96,13 +96,13 @@ Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/b
      them fails the build. Version history elsewhere in this file is exempt. -->
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.28.1"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.28.2"
 ```
 
 ```jsonc
 // package.json
 "devDependencies": {
-  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.28.1"
+  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.28.2"
 }
 ```
 
