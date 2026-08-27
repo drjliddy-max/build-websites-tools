@@ -212,7 +212,16 @@ export function createRepoOwnedPublisher({ git, fs, runGate, adapter, now = () =
           month: "2-digit",
           day: "2-digit",
         }).format(now());
+        // Carry the queue row's own metadata forward. Before v0.28.4 this built a
+        // fresh literal, which DISCARDED every field the queue row carried that is
+        // not listed below - `cluster` above all. Consumers key their public index
+        // off cluster (adaauditreport-web's registry merge skips any entry whose
+        // cluster it does not recognise), so dropping it published an article that
+        // no index would ever list. The queue row is the site's own classification
+        // of the topic; the publisher's job is to move it, not to re-invent it.
+        const queuedRow = queued.find((e) => e.slug === article.slug) ?? queued[0] ?? {};
         const entry = {
+          ...queuedRow,
           slug: article.slug,
           title: article.title,
           description: article.metaDescription,
