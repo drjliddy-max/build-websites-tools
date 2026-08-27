@@ -76,6 +76,38 @@ export class PipelineError extends Error {
  * @param deps.publisher     publication adapter (publish mode only)
  * @param deps.verifier      { check(url) -> {status, contentType, byteLength} }
  */
+/**
+ * Live-verification pacing. Injectable via `deps.verifyPolicy` so tests never
+ * sleep; production defaults size the article wait to a normal consumer
+ * deploy (~1-2 min) with headroom, inside the workflow job budget.
+ */
+function verifyPolicy(deps) {
+  return {
+    deployBudgetMs: 300_000,
+    idempotentBudgetMs: 60_000,
+    intervalMs: 15_000,
+    ...(deps.verifyPolicy ?? {}),
+  };
+}
+
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Poll a URL until it serves 200 or the budget runs out. Returns the LAST
+ * check result either way — the caller judges it; this helper never throws on
+ * a non-200. `deps.sleep` is injectable for tests.
+ */
+async function waitForLiveUrl(deps, url, { budgetMs, intervalMs }) {
+  const sleep = deps.sleep ?? defaultSleep;
+  const deadline = Date.now() + budgetMs;
+  let last = await deps.verifier.check(url);
+  while (last.status !== 200 && Date.now() + intervalMs <= deadline) {
+    await sleep(intervalMs);
+    last = await deps.verifier.check(url);
+  }
+  return last;
+}
+
 export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-run", dispatch = null }, deps) {
   const startedAt = new Date().toISOString();
   let state = "NOT_STARTED";
@@ -134,20 +166,79 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
     record("resolve-occurrence", true, { anchor, occurrence, contract: CADENCE_CONTRACT_ID });
 
     // ── 4. inspect existing publication state (idempotency) ──────────────
+    //
+    // An already-published occurrence must still hand THIS dispatch a proof it
+    // can stand on. The previous branch returned `reporter.latestFor(...)` —
+    // which in CI is null (attempt 1's proof is an artifact, never committed)
+    // or a stale proof carrying attempt 1's dispatch identity, which the
+    // dispatcher's correlation-matched poll can never accept. Observed
+    // 2026-08-27: six lanes published successfully, failed only verify-live
+    // against a still-deploying site, and their retries could never have
+    // recovered through this branch. Re-verify the live article and mint a
+    // FRESH proof bound to the current dispatch — truthfully COMPLETE when the
+    // article serves, truthfully FAILED at verify-live when it does not.
+    // No second article is ever created here.
     const published = schedule.published ?? [];
-    const alreadyInSchedule = published.some((entry) => entry.target_date === occurrence);
+    const publishedEntry = published.find((entry) => entry.target_date === occurrence) ?? null;
     const alreadyReported = await deps.reporter.alreadyPublished(site.laneKey, occurrence);
-    if (alreadyInSchedule || alreadyReported) {
+    if (publishedEntry || alreadyReported) {
       record("idempotency", true, "already published, no second article");
-      const existing = await deps.reporter.latestFor(site.laneKey, occurrence);
-      return {
-        ok: true,
-        state: "COMPLETE",
-        idempotentNoOp: true,
-        stages,
-        proof: existing,
-        note: `${site.laneKey} already published ${occurrence}; refusing to create a duplicate.`,
+      const slug = publishedEntry?.slug ?? (await deps.reporter.latestFor(site.laneKey, occurrence))?.article?.slug ?? null;
+      if (!slug) {
+        return fail(
+          "idempotency",
+          new PipelineError(
+            "idempotency",
+            `${site.laneKey} reports a prior publication for ${occurrence} but no slug is recoverable; cannot verify it.`,
+          ),
+        );
+      }
+      const articleUrl = `https://${site.domain}${site.blogPath}/${slug}`;
+      const articleCheck = await waitForLiveUrl(deps, articleUrl, {
+        budgetMs: verifyPolicy(deps).idempotentBudgetMs,
+        intervalMs: verifyPolicy(deps).intervalMs,
+      });
+      const completedAt = new Date().toISOString();
+      const provenance = {
+        classification: "NEW_CANONICAL",
+        generatedBy: "canonical-pipeline",
+        note: `idempotent re-verification of the ${occurrence} publication; no second article was created`,
       };
+      const articleFacts = { slug, title: publishedEntry?.title ?? null };
+      if (articleCheck.status === 200) {
+        record("verify-live", true, { articleUrl, idempotent: true });
+        const proof = buildProof({
+          laneKey: site.laneKey,
+          siteId,
+          occurrence,
+          state: "COMPLETE",
+          article: articleFacts,
+          image: null,
+          publication: null,
+          verification: { articleUrl, articleStatus: 200, checkedAt: completedAt },
+          provenance,
+          pipelineVersion: PIPELINE_VERSION,
+          dispatch,
+          startedAt,
+          completedAt,
+        });
+        await deps.reporter.report(proof);
+        return {
+          ok: true,
+          state: "COMPLETE",
+          idempotentNoOp: true,
+          stages,
+          proof,
+          note: `${site.laneKey} already published ${occurrence}; live verification re-confirmed ${articleUrl}.`,
+        };
+      }
+      return fail(
+        "verify-live",
+        new PipelineError(
+          "verify-live",
+          `Already-published article returned HTTP ${articleCheck.status} at ${articleUrl}.`,
+        ),
+      );
     }
     state = assertTransition(state, "READY");
     record("idempotency", true, "no prior publication for this occurrence");
@@ -303,15 +394,28 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
     record("publish", true, publication.commitSha);
 
     // ── 12/13. live verification of BOTH artefacts ────────────────────────
+    //
+    // The publication commit triggers the consumer's own production deploy,
+    // which takes minutes; checking the URL once, immediately, races that
+    // deploy and loses. Observed 2026-08-27: six lanes published correctly and
+    // all six "failed" verify-live against the not-yet-deployed site. Wait,
+    // bounded, for the deploy to serve the article; the image ships in the
+    // same deploy, so it gets only a short residual wait after the article.
     const articleUrl = `https://${site.domain}${site.blogPath}/${article.slug}`;
-    const articleCheck = await deps.verifier.check(articleUrl);
+    const articleCheck = await waitForLiveUrl(deps, articleUrl, {
+      budgetMs: verifyPolicy(deps).deployBudgetMs,
+      intervalMs: verifyPolicy(deps).intervalMs,
+    });
     if (articleCheck.status !== 200) {
       throw new PipelineError("verify-live", `Article returned HTTP ${articleCheck.status} at ${articleUrl}.`);
     }
     const imageUrl = acquired.image.url.startsWith("http")
       ? acquired.image.url
       : `https://${site.domain}${acquired.image.url}`;
-    const imageCheck = await deps.verifier.check(imageUrl);
+    const imageCheck = await waitForLiveUrl(deps, imageUrl, {
+      budgetMs: verifyPolicy(deps).idempotentBudgetMs,
+      intervalMs: verifyPolicy(deps).intervalMs,
+    });
     if (imageCheck.status !== 200) {
       throw new PipelineError("verify-live", `Image returned HTTP ${imageCheck.status} at ${imageUrl}.`);
     }
