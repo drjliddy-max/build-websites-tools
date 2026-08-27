@@ -94,7 +94,7 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Poll a URL until it serves 200 or the budget runs out. Returns the LAST
- * check result either way — the caller judges it; this helper never throws on
+ * check result either way - the caller judges it; this helper never throws on
  * a non-200. `deps.sleep` is injectable for tests.
  */
 async function waitForLiveUrl(deps, url, { budgetMs, intervalMs }) {
@@ -175,7 +175,7 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
     // 2026-08-27: six lanes published successfully, failed only verify-live
     // against a still-deploying site, and their retries could never have
     // recovered through this branch. Re-verify the live article and mint a
-    // FRESH proof bound to the current dispatch — truthfully COMPLETE when the
+    // FRESH proof bound to the current dispatch - truthfully COMPLETE when the
     // article serves, truthfully FAILED at verify-live when it does not.
     // No second article is ever created here.
     const published = schedule.published ?? [];
