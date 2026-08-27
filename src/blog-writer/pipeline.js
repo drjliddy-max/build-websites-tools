@@ -168,7 +168,7 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
     // ── 4. inspect existing publication state (idempotency) ──────────────
     //
     // An already-published occurrence must still hand THIS dispatch a proof it
-    // can stand on. The previous branch returned `reporter.latestFor(...)` —
+    // can stand on. The previous branch returned `reporter.latestFor(...)`,
     // which in CI is null (attempt 1's proof is an artifact, never committed)
     // or a stale proof carrying attempt 1's dispatch identity, which the
     // dispatcher's correlation-matched poll can never accept. Observed
