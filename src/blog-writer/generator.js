@@ -354,7 +354,12 @@ export function createHostedProvider({ model, endpoint, apiKeyEnv, fetchImpl = f
           },
           body: JSON.stringify({
             model,
-            max_tokens: 4096,
+            // Adaptive thinking (the model's default when `thinking` is
+            // omitted) spends output tokens before the article JSON, and both
+            // count against this cap. 4096 left the article at risk of
+            // mid-JSON truncation once thinking ran; the raw-fetch transport
+            // has no SDK timeout to protect, so give the response room.
+            max_tokens: 16000,
             messages: [{ role: "user", content: prompt }],
           }),
           signal: controller.signal,
@@ -364,7 +369,28 @@ export function createHostedProvider({ model, endpoint, apiKeyEnv, fetchImpl = f
           throw new GenerationError(`Hosted model returned ${response.status}.`);
         }
         const payload = await response.json();
-        return payload.content?.[0]?.text ?? "";
+        // The response is a content-block ARRAY and the first block is not
+        // necessarily text: claude-sonnet-5 runs adaptive thinking by default,
+        // so a `thinking` block precedes the text. Reading content[0].text
+        // turned every valid response into "" and failed all seven estate
+        // lanes on 2026-08-27. Collect the text blocks, wherever they sit.
+        const text = Array.isArray(payload.content)
+          ? payload.content
+              .filter((block) => block?.type === "text")
+              .map((block) => block.text ?? "")
+              .join("")
+          : "";
+        if (text.trim() === "") {
+          if (payload.stop_reason === "refusal") {
+            throw new GenerationError("Hosted model refused the request (stop_reason=refusal).");
+          }
+          if (payload.stop_reason === "max_tokens") {
+            throw new GenerationError(
+              "Hosted response hit max_tokens before any text was produced.",
+            );
+          }
+        }
+        return text;
       } finally {
         clearTimeout(timer);
       }
