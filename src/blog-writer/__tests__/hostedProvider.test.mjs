@@ -115,3 +115,14 @@ test("non-2xx still fails closed on status alone", async () => {
     (error) => error instanceof GenerationError && /529/.test(error.message),
   );
 });
+
+test("the hosted request pins low effort - latency is a contract inside the CI job budget", async () => {
+  const { provider, calls } = makeProvider({
+    content: [{ type: "text", text: "ok" }],
+    stop_reason: "end_turn",
+  });
+  await provider.complete("prompt");
+  const body = JSON.parse(calls[0].init.body);
+  assert.deepEqual(body.output_config, { effort: "low" });
+  assert.equal(body.max_tokens, 16000);
+});

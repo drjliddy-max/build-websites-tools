@@ -360,6 +360,15 @@ export function createHostedProvider({ model, endpoint, apiKeyEnv, fetchImpl = f
             // mid-JSON truncation once thinking ran; the raw-fetch transport
             // has no SDK timeout to protect, so give the response room.
             max_tokens: 16000,
+            // Latency is a CONTRACT here, not a preference: the call sits
+            // inside a CI job budget, behind a 300s per-attempt abort, with a
+            // bounded repair loop. Left to its default effort the model can
+            // think past the abort on a hard prompt - the book lane burned two
+            // full job budgets (10 then 20 minutes, 2026-08-27) on exactly
+            // that while six sibling lanes generated in under 90 seconds.
+            // Low effort keeps generation in seconds; article QUALITY is owned
+            // by the validators and the typed repair loop, never by effort.
+            output_config: { effort: "low" },
             messages: [{ role: "user", content: prompt }],
           }),
           signal: controller.signal,
