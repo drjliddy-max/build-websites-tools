@@ -216,3 +216,55 @@ test("IDEMPOTENT: rerun after a rolled-back failure leaves the repo publishable"
   const result = await retry.publisher.publish(CALL);
   assert.equal(result.outcome, "created");
 });
+
+// ── queue metadata preservation (v0.28.4) ─────────────────────────────────
+//
+// Before v0.28.4 `publish` built a fresh entry literal, which discarded every
+// field the queue row carried beyond the six it names - `cluster` above all.
+// adaauditreport-web's public index merges a published entry only when it
+// recognises entry.cluster; on 2026-08-27 the Aug-27 article published with
+// cluster undefined and no index would ever list it. The queue row is the
+// site's own classification and the publisher must move it, not re-invent it.
+
+test("the queue row's cluster survives publication (the ADA index defect)", async () => {
+  const { publisher, files } = harness({
+    schedule: {
+      published: [],
+      queue: [{ slug: "planned", target_date: "2026-08-22", cluster: "compliance" }]
+    }
+  });
+  await publisher.publish(CALL);
+  const schedule = JSON.parse(files.get("blog-schedule.json"));
+  assert.equal(
+    schedule.published[0].cluster,
+    "compliance",
+    "cluster must be carried forward - an index that keys off it drops the article otherwise"
+  );
+});
+
+test("unknown queue-row metadata is preserved rather than silently dropped", async () => {
+  const { publisher, files } = harness({
+    schedule: {
+      published: [],
+      queue: [{ slug: "planned", target_date: "2026-08-22", cluster: "industry", badgeLabel: "Industry", siteNote: "keep me" }]
+    }
+  });
+  await publisher.publish(CALL);
+  const entry = JSON.parse(files.get("blog-schedule.json")).published[0];
+  assert.equal(entry.badgeLabel, "Industry");
+  assert.equal(entry.siteNote, "keep me");
+});
+
+test("canonical fields still WIN over stale queue values", async () => {
+  const { publisher, files } = harness({
+    schedule: {
+      published: [],
+      queue: [{ slug: "stale-slug", title: "Stale", target_date: "2026-08-22", cluster: "proof" }]
+    }
+  });
+  await publisher.publish(CALL);
+  const entry = JSON.parse(files.get("blog-schedule.json")).published[0];
+  assert.equal(entry.slug, ARTICLE.slug, "the published slug is the article's, not the queue's");
+  assert.equal(entry.title, ARTICLE.title);
+  assert.equal(entry.cluster, "proof", "but site metadata still comes from the queue row");
+});
