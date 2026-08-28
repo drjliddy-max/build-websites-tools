@@ -31,6 +31,9 @@
     },
     "./blog-writer/publication-proof": {
       "default": "./src/blog-writer/publicationProof.js"
+    },
+    "./blog-writer/publication-evidence": {
+      "default": "./src/blog-writer/publicationEvidence.js"
     }
   },
   "description": "Build-time enforcement gates for production websites: WCAG 2.1 AA accessibility, Google indexing rules, and the MASTER_VISIBILITY_MATRIX AI Instrumentation Contract. One package, every site, no drift.",
