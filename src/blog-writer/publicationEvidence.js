@@ -94,7 +94,10 @@ export function extractRenderedHero(html, { fallbackMarkers = [] } = {}) {
   if (srcs.length === 0) return null;
   const candidate = srcs.find((s) => /photos|_next\/image/i.test(s));
   if (!candidate) return null;
-  const decoded = candidate.replace(/&amp;/g, "&");
+  // Decode the entities a browser decodes before judging the path: production
+  // served src="&quot;/photos/x.jpg&quot;", and only the decoded form reveals the
+  // stray quotes that made it resolve to /%22...%22.
+  const decoded = candidate.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#(\d+);/g, (_m, n) => String.fromCharCode(Number(n)));
   const isFallback = fallbackMarkers.some((marker) => decoded.includes(marker));
   return { url: decoded, isFallback };
 }

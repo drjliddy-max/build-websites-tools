@@ -29,6 +29,24 @@ import {
 } from "../proof.js";
 import { runBlogWriterPipeline, PIPELINE_VERSION } from "../pipeline.js";
 
+
+/**
+ * Markup a healthy lane would serve. Deliberately minimal: the strict contract reads
+ * the article's title, its hero, index membership, nav reachability and sitemap entry,
+ * so those are the only things modelled here.
+ */
+function healthyPage(url, over = {}) {
+  const slug = over.slug ?? "what-cupping-therapy-does-for-athletes";
+  const hero = over.hero ?? "/photos/what-cupping-therapy-does-for-athletes-4321.jpg";
+  if (url.includes("/sitemap.xml")) return `<urlset><loc>https://qirofit.com/blog/${slug}</loc></urlset>`;
+  if (url.endsWith("/blog")) return over.indexOmitsArticle ? `<a href="/blog/other">Other</a>` : `<a href="/blog/${slug}">A</a>`;
+  if (url.endsWith("qirofit.com/") || url.endsWith("qirofit.com")) {
+    return over.navOmitsIndex ? `<a href="/about">About</a>` : `<a href="/blog">Blog</a>`;
+  }
+  const img = over.noHero ? "" : `<img src="${hero}">`;
+  return `<title>${over.title ?? "What cupping therapy does for athletes"}</title>${img}<p>body text here</p>`;
+}
+
 // ── fixtures ───────────────────────────────────────────────────────────────
 
 const SITE = {
@@ -45,6 +63,18 @@ const SITE = {
     prohibitedTerms: ["wellness journey", "transform your life", "pain-free"]
   },
   imagePolicy: { required: true, provider: "pexels", queryHint: "athlete recovery rehabilitation" },
+  // PUBLICATION_CONTRACT_V1: a lane with no declaration is refused, so this fixture
+  // declares its surfaces like every real lane does. Added when the strict proof was
+  // wired into the publish path - the fixture predates the contract, it does not
+  // disagree with it.
+  publicationEvidence: {
+    contract: "PUBLICATION_CONTRACT_V1",
+    indexSurface: { path: "/blog" },
+    discoverySurface: { path: "/", mustLinkTo: "/blog" },
+    sitemap: { path: "/sitemap.xml" },
+    heroEvidence: { source: "rendered-markup", fallbackMarkers: ["facility-training-floor"] },
+    applicability: {},
+  },
   publication: {
     adapter: "github-repo-commit",
     workflowFile: "blog-writer-qirofit-publish.yml",
@@ -510,6 +540,9 @@ function pipelineDeps({ modelOutput, schedule, sink = createInMemoryTestSink() }
     imageProvider: createPexelsProvider({ fetchImpl: fixtureFetch() }),
     reporter: createDurableReporter({ sink }),
     verifier: { check: async () => ({ status: 200 }) },
+    // Strict proof reads real markup. Default to a healthy estate; individual tests
+    // override `deps.fetchPage` to model a specific production defect.
+    fetchPage: async (url) => ({ status: 200, text: async () => healthyPage(url) }),
     publisher: { publish: async () => ({ commitSha: "deadbeef" }) },
     // Tests never wait for a deploy: zero budgets make waitForLiveUrl check
     // exactly once, and an injected sleep would fail loudly if ever reached.
@@ -1111,4 +1144,98 @@ test("verify-live waits out the consumer deploy instead of racing it", async () 
   assert.equal(result.ok, true, JSON.stringify(result.proof?.failure ?? null));
   assert.equal(result.state, "COMPLETE");
   assert.equal(sleeps, 2, "two 404s before the deploy finished = two bounded waits");
+});
+
+// ── INTEGRATION: the strict proof at the real publish seam ──────────────────
+//
+// These drive runBlogWriterPipeline, not the evaluator, so they prove the CALLER
+// applies the contract - a contract nothing invokes is documentation, not a gate.
+// Each case is shaped on a defect this estate actually shipped on 2026-08-27/28.
+
+const strictDeps = (fetchPage) => {
+  const deps = pipelineDeps({
+    modelOutput: modelResponse({
+      title: GOOD_ARTICLE.title, metaDescription: GOOD_ARTICLE.metaDescription,
+      imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: SECTION_PROSE.repeat(6),
+    }),
+    schedule: ANCHORED_SCHEDULE,
+  });
+  deps.fetchPage = fetchPage;
+  return deps;
+};
+const runStrict = (deps) =>
+  runBlogWriterPipeline({ siteId: "qirofit", occurrence: "2026-08-22", mode: "publish" }, deps);
+const runWith = (pageOver) =>
+  runStrict(strictDeps(async (url) => ({ status: 200, text: async () => healthyPage(url, pageOver) })));
+
+test("INTEGRATION: a correct publication reaches COMPLETE through the strict gate", async () => {
+  const r = await runWith({});
+  assert.equal(r.ok, true, JSON.stringify(r.proof?.failure ?? {}));
+  assert.equal(r.proof.verification.classification, "PUBLISHED");
+  assert.equal(r.proof.verification.contract, "PUBLICATION_CONTRACT_V1");
+});
+
+test("INTEGRATION: quoted hero path in markup fails, though the canonical file serves 200", async () => {
+  // Real shape: siteclinic and bmj served src="&quot;/photos/x.jpg&quot;", which a
+  // browser resolves to /%22...%22 while the canonical file kept serving 200.
+  const r = await runWith({ hero: "&quot;/photos/what-cupping-therapy-does-for-athletes-4321.jpg&quot;" });
+  assert.equal(r.ok, false);
+  assert.equal(r.proof.failure.detail.classification, "PUBLISHED_BROKEN_MEDIA");
+});
+
+test("INTEGRATION: article renders no hero at all -> MISSING_MEDIA", async () => {
+  const r = await runWith({ noHero: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.proof.failure.detail.classification, "MISSING_MEDIA");
+});
+
+test("INTEGRATION: article route serves but the index omits it -> NOT_INDEXED", async () => {
+  const r = await runWith({ indexOmitsArticle: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.proof.failure.detail.classification, "NOT_INDEXED");
+});
+
+test("INTEGRATION: indexed but navigation does not reach the surface -> NOT_DISCOVERABLE", async () => {
+  const r = await runWith({ navOmitsIndex: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.proof.failure.detail.classification, "NOT_DISCOVERABLE");
+});
+
+test("INTEGRATION: a fallback hero does not satisfy intended-hero identity", async () => {
+  const r = await runWith({ hero: "/photos/facility-training-floor.jpg" });
+  assert.equal(r.ok, false, "a placeholder returning 200 must never read as the intended hero");
+  assert.equal(r.proof.failure.detail.dimensions.HERO_MEDIA_VALID.detail, "MEDIA_WRONG_IDENTITY");
+});
+
+test("INTEGRATION: evidence fetch failure is PROOF_INCOMPLETE, not a fabricated defect", async () => {
+  const r = await runStrict(strictDeps(async (url) => {
+    if (url.endsWith("/blog") || url.endsWith("qirofit.com/")) throw new Error("network down");
+    return { status: 200, text: async () => healthyPage(url) };
+  }));
+  assert.equal(r.ok, false);
+  assert.equal(r.proof.failure.detail.classification, "PROOF_INCOMPLETE",
+    "an unreachable index must never be reported as NOT_INDEXED");
+  assert.ok(r.proof.failure.detail.dimensions.ARTICLE_INDEXED.outcome === "UNKNOWN");
+});
+
+test("INTEGRATION: there is NO fallback to the old route-200/image-200 verdict", async () => {
+  // Strict evidence unavailable must not silently degrade to the proof it replaced.
+  const r = await runStrict(strictDeps(async () => { throw new Error("all evidence unavailable"); }));
+  assert.equal(r.ok, false, "route 200 + image 200 alone must no longer verify a publication");
+});
+
+test("INTEGRATION: an undeclared lane is refused rather than measured with assumptions", async () => {
+  const deps = strictDeps(async (url) => ({ status: 200, text: async () => healthyPage(url) }));
+  deps.registry = { get: () => { const u = { ...SITE }; delete u.publicationEvidence; return u; } };
+  const r = await runStrict(deps);
+  assert.equal(r.ok, false);
+  assert.match(r.proof.failure.reason, /declaration is missing/);
+});
+
+test("INTEGRATION: the proof retains evidence explaining the verdict", async () => {
+  const r = await runWith({});
+  const e = r.proof.verification.evidence;
+  assert.ok(e.indexUrl && e.discoveryUrl && e.renderedHeroUrl && e.intendedHeroUrl,
+    "a verdict must be explainable without re-running an investigation");
+  assert.equal(r.proof.verification.dimensions.ARTICLE_DISCOVERABLE.outcome, "PASS");
 });
