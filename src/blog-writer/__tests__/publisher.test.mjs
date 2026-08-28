@@ -72,7 +72,7 @@ function harness({ schedule, gitFail = null, gateFail = false, dirty = "", remot
 
 const SCHEDULE = {
   published: [{ slug: "prior", title: "Prior", target_date: "2026-08-08" }],
-  queue: [{ slug: "planned", target_date: "2026-08-22" }]
+  queue: [{ slug: ARTICLE.slug, title: "Planned", target_date: "2026-08-22" }]
 };
 
 const CALL = { site: SITE, article: ARTICLE, image: IMAGE, occurrence: "2026-08-22", idempotencyKey: "blog-writer-qirofit:2026-08-22:1" };
@@ -230,7 +230,7 @@ test("the queue row's cluster survives publication (the ADA index defect)", asyn
   const { publisher, files } = harness({
     schedule: {
       published: [],
-      queue: [{ slug: "planned", target_date: "2026-08-22", cluster: "compliance" }]
+      queue: [{ slug: ARTICLE.slug, target_date: "2026-08-22", cluster: "compliance" }]
     }
   });
   await publisher.publish(CALL);
@@ -246,7 +246,7 @@ test("unknown queue-row metadata is preserved rather than silently dropped", asy
   const { publisher, files } = harness({
     schedule: {
       published: [],
-      queue: [{ slug: "planned", target_date: "2026-08-22", cluster: "industry", badgeLabel: "Industry", siteNote: "keep me" }]
+      queue: [{ slug: ARTICLE.slug, target_date: "2026-08-22", cluster: "industry", badgeLabel: "Industry", siteNote: "keep me" }]
     }
   });
   await publisher.publish(CALL);
@@ -255,16 +255,103 @@ test("unknown queue-row metadata is preserved rather than silently dropped", asy
   assert.equal(entry.siteNote, "keep me");
 });
 
-test("canonical fields still WIN over stale queue values", async () => {
+test("canonical fields still WIN over stale queue values (title), ancestry proven", async () => {
   const { publisher, files } = harness({
     schedule: {
       published: [],
-      queue: [{ slug: "stale-slug", title: "Stale", target_date: "2026-08-22", cluster: "proof" }]
+      queue: [{ slug: ARTICLE.slug, title: "Stale queued title", target_date: "2026-08-22", cluster: "proof" }]
     }
   });
   await publisher.publish(CALL);
   const entry = JSON.parse(files.get("blog-schedule.json")).published[0];
-  assert.equal(entry.slug, ARTICLE.slug, "the published slug is the article's, not the queue's");
+  assert.equal(entry.slug, ARTICLE.slug);
   assert.equal(entry.title, ARTICLE.title);
   assert.equal(entry.cluster, "proof", "but site metadata still comes from the queue row");
+});
+
+// -- ancestry binding: FND-0041 --------------------------------------------
+//
+// v0.28.4 read `queued.find(slug match) ?? queued[0] ?? {}`. `queued` is already
+// filtered to target_date === occurrence and refuses above on more than one row, so
+// queued[0] is the unique row FOR THAT OCCURRENCE - which proves the occurrence, not
+// the topic. When the generator emitted a different article the fallback carried the
+// planned topic's cluster onto it. Fixtures below are shaped on the real 2026-08-27
+// divergence: queue row reduced-motion-accessibility (education) vs a dentistry article.
+
+const DIVERGED_QUEUE = {
+  published: [],
+  queue: [{
+    slug: "reduced-motion-accessibility",
+    title: "Animation, Motion Sensitivity, and Reduced Motion",
+    cluster: "education",
+    target_date: "2026-08-22",
+  }],
+};
+
+test("ANCESTRY PROVEN: a matching queue row still passes its metadata forward", async () => {
+  const { publisher, files } = harness({
+    schedule: {
+      published: [],
+      queue: [{ slug: ARTICLE.slug, title: "Planned", cluster: "compliance", target_date: "2026-08-22" }],
+    },
+  });
+  await publisher.publish(CALL);
+  const entry = JSON.parse(files.get("blog-schedule.json")).published[0];
+  assert.equal(entry.cluster, "compliance", "the Wave 1 preservation fix must not regress");
+  assert.equal(entry.slug, ARTICLE.slug);
+});
+
+test("ANCESTRY UNPROVEN: a diverged article does NOT inherit the queue row's metadata", async () => {
+  const { publisher, files } = harness({ schedule: DIVERGED_QUEUE });
+  await assert.rejects(() => publisher.publish(CALL), (e) => e.stage === "queue-article-identity-mismatch");
+  // and nothing was published carrying the wrong cluster
+  const after = JSON.parse(files.get("blog-schedule.json"));
+  assert.equal(after.published.length, 0, "a diverged article must not be published at all");
+});
+
+test("CARDINALITY IS NOT ANCESTRY: exactly one queue row that does not match still refuses", async () => {
+  const { publisher } = harness({ schedule: DIVERGED_QUEUE });
+  await assert.rejects(
+    () => publisher.publish(CALL),
+    (e) => e.stage === "queue-article-identity-mismatch" && e.detail.includes("reduced-motion-accessibility"),
+    "being the only row for the occurrence does not make it this article's ancestor",
+  );
+});
+
+test("the refusal names BOTH identities so the divergence is observable", async () => {
+  const { publisher } = harness({ schedule: DIVERGED_QUEUE });
+  await assert.rejects(() => publisher.publish(CALL), (e) => {
+    assert.ok(e.detail.includes("reduced-motion-accessibility"), "queued identity reported");
+    assert.ok(e.detail.includes(ARTICLE.slug), "generated identity reported");
+    return true;
+  });
+});
+
+test("REFUSAL IS PRE-WRITE: a diverged publication leaves no draft, image or commit", async () => {
+  const { publisher, files, log } = harness({ schedule: DIVERGED_QUEUE });
+  await assert.rejects(() => publisher.publish(CALL));
+  const written = [...files.keys()].filter((k) => k !== "blog-schedule.json");
+  assert.deepEqual(written, [], "nothing may be written before ancestry is proven");
+  assert.deepEqual(log.filter((c) => c.startsWith("commit") || c.startsWith("push")), []);
+});
+
+test("ABSENCE IS NOT MISMATCH: no queue row publishes with no inherited metadata", async () => {
+  const { publisher, files } = harness({ schedule: { published: [], queue: [] } });
+  await publisher.publish(CALL);
+  const entry = JSON.parse(files.get("blog-schedule.json")).published[0];
+  assert.equal(entry.slug, ARTICLE.slug, "an unqueued publication still succeeds");
+  assert.equal(entry.cluster, undefined, "and invents no cluster");
+});
+
+test("multiple queue rows for the occurrence still refuse before the identity check", async () => {
+  const { publisher } = harness({
+    schedule: {
+      published: [],
+      queue: [
+        { slug: "a", target_date: "2026-08-22", cluster: "education" },
+        { slug: "b", target_date: "2026-08-22", cluster: "proof" },
+      ],
+    },
+  });
+  await assert.rejects(() => publisher.publish(CALL), (e) => e.stage === "queue-ambiguous");
 });

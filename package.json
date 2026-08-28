@@ -1,6 +1,6 @@
 {
   "name": "build-websites-tools",
-  "version": "0.28.4",
+  "version": "0.28.5",
   "type": "module",
   "exports": {
     "./related-content": {

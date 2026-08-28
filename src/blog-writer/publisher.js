@@ -177,6 +177,28 @@ export function createRepoOwnedPublisher({ git, fs, runGate, adapter, now = () =
       if ((schedule.published ?? []).some((e) => e.slug === article.slug)) {
         throw new PublicationError("duplicate-slug", `Slug "${article.slug}" is already published.`);
       }
+      // Ancestry must be PROVEN, not inferred from the occurrence. `queued` is already
+      // filtered to target_date === occurrence and refuses above when more than one row
+      // matches, so queued[0] is the unique row FOR THIS OCCURRENCE. That proves the
+      // occurrence, not the topic: cluster and its siblings describe what was planned to
+      // be written, and when the generator emits a different article the planned
+      // classification belongs to a topic that did not ship.
+      //
+      // Observed 2026-08-27: the queue row was reduced-motion-accessibility (cluster
+      // education) and the article published was ada-compliance-for-dentists-booking-
+      // widgets-and-forms. Inheriting on occurrence alone would have filed a dentistry
+      // article under education. Refuse instead, at the same seam as the other identity
+      // guards and BEFORE anything is written, so the divergence is observable rather
+      // than laundered into correct-looking metadata.
+      if (queued.length === 1 && queued[0].slug !== article.slug) {
+        throw new PublicationError(
+          "queue-article-identity-mismatch",
+          `The queue row for ${occurrence} is "${queued[0].slug}" but the generated article is ` +
+            `"${article.slug}". Queue metadata describes the planned topic, so it cannot be ` +
+            `carried onto a different article. Refusing rather than guessing ancestry.`,
+          [queued[0].slug, article.slug],
+        );
+      }
 
       const rollback = async () => {
         await fs.writeFile(schedulePath, scheduleRaw, "utf8");
@@ -219,7 +241,10 @@ export function createRepoOwnedPublisher({ git, fs, runGate, adapter, now = () =
         // cluster it does not recognise), so dropping it published an article that
         // no index would ever list. The queue row is the site's own classification
         // of the topic; the publisher's job is to move it, not to re-invent it.
-        const queuedRow = queued.find((e) => e.slug === article.slug) ?? queued[0] ?? {};
+        // Safe by the identity guard above: either queued is empty (nothing to inherit)
+        // or its single row's slug equals article.slug (ancestry proven). No heuristic
+        // fallback remains - absence is not a mismatch, and a mismatch never reaches here.
+        const queuedRow = queued[0] ?? {};
         const entry = {
           ...queuedRow,
           slug: article.slug,
