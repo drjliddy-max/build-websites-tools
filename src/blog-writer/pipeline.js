@@ -41,6 +41,8 @@ import {
   validateArticle,
   validateImage,
 } from "./validators.js";
+import { resolveEvidencePlan, collectPublicationEvidence } from "./publicationEvidence.js";
+import { evaluatePublication, CLASSIFICATION } from "./publicationProof.js";
 
 export const PIPELINE_VERSION = "1.0.0";
 
@@ -419,8 +421,69 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
     if (imageCheck.status !== 200) {
       throw new PipelineError("verify-live", `Image returned HTTP ${imageCheck.status} at ${imageUrl}.`);
     }
+
+    // ── STRICT PUBLICATION PROOF (PUBLICATION_CONTRACT_V1) ────────────────
+    //
+    // The two checks above are necessary and were never sufficient. They prove an
+    // artefact EXISTS at a path; they cannot prove the page a reader receives
+    // references it. Every user-facing defect found in this estate on 2026-08-27/28
+    // passed them: two sites served the hero file at 200 while their markup pointed
+    // at /%22...%22, one referenced no hero at all, one was absent from its index,
+    // and one was indexed behind navigation that linked nowhere.
+    //
+    // There is deliberately NO fallback to the old route-200/image-200 verdict. If
+    // the strict evidence cannot be gathered the publication is NOT verified, because
+    // a proof that degrades to the thing it replaced is not a proof.
+    const evidencePlan = resolveEvidencePlan(site, article);
+    const collected = await collectPublicationEvidence(evidencePlan, {
+      fetchImpl: deps.fetchPage ?? ((url) => fetch(url)),
+      expectedTitle: article.title,
+    });
+    // The rendered hero is fetched separately: what the PAGE references, not what the
+    // publisher intended. Comparing the intended file against itself is precisely the
+    // mistake that shipped two broken heroes.
+    let renderedHeroStatus;
+    if (collected.renderedHeroUrl) {
+      const heroAbsolute = collected.renderedHeroUrl.startsWith("http")
+        ? collected.renderedHeroUrl
+        : `https://${site.domain}${collected.renderedHeroUrl}`;
+      renderedHeroStatus = (await waitForLiveUrl(deps, heroAbsolute, {
+        budgetMs: verifyPolicy(deps).idempotentBudgetMs,
+        intervalMs: verifyPolicy(deps).intervalMs,
+      })).status;
+    }
+    const verdict = evaluatePublication(
+      {
+        ...collected,
+        artifactCommitted: true,
+        metadataValid: true,
+        expectedSlug: article.slug,
+        mediaRequired: site.imagePolicy?.required === true,
+        mediaPersisted: imageCheck.status === 200,
+        intendedHeroUrl: acquired.image.url,
+        heroFetchStatus: renderedHeroStatus,
+      },
+      evidencePlan.applicability,
+    );
+    if (!verdict.published) {
+      throw new PipelineError(
+        "verify-live",
+        `Strict publication proof did not pass: ${verdict.classification}. ` +
+          `failed=[${verdict.failedDimensions.join(", ")}] unknown=[${verdict.unknownDimensions.join(", ")}]`,
+        {
+          classification: verdict.classification,
+          dimensions: verdict.dimensions,
+          observed: {
+            articleUrl, articleStatus: articleCheck.status,
+            indexUrl: evidencePlan.indexUrl, discoveryUrl: evidencePlan.discoveryUrl,
+            renderedHeroUrl: collected.renderedHeroUrl, renderedHeroStatus,
+            intendedHeroUrl: acquired.image.url, imageUrl, imageStatus: imageCheck.status,
+          },
+        },
+      );
+    }
     state = assertTransition(state, "VERIFIED");
-    record("verify-live", true, { articleUrl, imageUrl });
+    record("verify-live", true, { articleUrl, imageUrl, classification: verdict.classification });
 
     // ── 14/15/16. proof, durable report, completion ───────────────────────
     state = assertTransition(state, "COMPLETE");
@@ -438,6 +501,20 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
         imageUrl,
         imageStatus: imageCheck.status,
         checkedAt: new Date().toISOString(),
+        // Retained so a verdict can be explained without re-running an investigation.
+        contract: verdict.contract,
+        classification: verdict.classification,
+        dimensions: verdict.dimensions,
+        evidence: {
+          indexUrl: evidencePlan.indexUrl,
+          discoveryUrl: evidencePlan.discoveryUrl,
+          discoveryMustLinkTo: evidencePlan.discoveryMustLinkTo,
+          sitemapUrl: evidencePlan.sitemapUrl,
+          renderedHeroUrl: collected.renderedHeroUrl,
+          renderedHeroStatus,
+          intendedHeroUrl: acquired.image.url,
+          renderedTitle: collected.renderedTitle,
+        },
       },
       provenance: {
         classification: "NEW_CANONICAL",
