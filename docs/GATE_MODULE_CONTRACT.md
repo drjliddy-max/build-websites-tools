@@ -60,11 +60,11 @@ policy helper** where possible: a function that takes already-gathered state and
 returns a verdict, with no I/O. `browserModeRefusal` in `gate-ada.ts` is the
 reference shape: it is testable precisely because it does not need a browser.
 
-## The second idiom in the tree
+## The second idiom, now retired
 
-Four modules (`gate-ai-instrumentation.ts`,
+Until 2026-09-02 four modules (`gate-ai-instrumentation.ts`,
 `gate-ai-instrumentation-source.ts`, `gate-conversion-instrumentation-source.ts`
-and `gate-sitemap-source.ts`) use an older spelling:
+and `gate-sitemap-source.ts`) used an older spelling:
 
 ```ts
 const isCli =
@@ -72,21 +72,22 @@ const isCli =
   import.meta.url.endsWith(process.argv[1] ?? "");
 ```
 
-It satisfies the invariant under normal test and CLI conditions, so it is not a
-bug in practice today and is **not** scheduled for a flag-day migration. Two
-edges are weaker than the canonical form, and new code should not copy it:
+It satisfied the invariant under normal test and CLI conditions, but two edges
+were weaker than the canonical form, which is why every module now uses the
+canonical guard and new code must not reintroduce this one:
 
-- **`process.argv[1]` undefined** (for example `node -e 'import(...)'`) makes
-  `endsWith("")` return `true`, so the module self-executes. The canonical form
+- **`process.argv[1]` undefined** (for example `node -e 'import(...)'`) made
+  `endsWith("")` return `true`, so the module self-executed. The canonical form
   rejects this via `!!process.argv[1]`. This is also why the enforcement test
   imports through a real importer **file** rather than `node -e`: `-e` would trip
   this edge and produce a misleading failure.
 - **`` `file://${path}` ``** is string interpolation, not URL encoding. Paths
   containing spaces or non-ASCII characters do not round-trip; the `endsWith`
-  clause is what rescues it. `fileURLToPath` handles this correctly.
+  clause was what rescued it. `fileURLToPath` handles this correctly.
 
-The enforcement test asserts the **outcome**, not the idiom, so both spellings
-pass and the tree can converge incrementally.
+The enforcement test asserts the **outcome**, not the idiom, so a stray copy of
+the old spelling would still pass it. Grep for `const isCli` before merging if
+you suspect one.
 
 ## Enforcement
 

@@ -28,7 +28,7 @@ const REPO_ROOT = path.resolve(
   "..",
 );
 
-const SCAN_ROOTS = ["src", "bin"];
+const SCAN_ROOTS = ["src", "bin", "docs"];
 const DOC_FILES = ["README.md", "CHANGELOG.md", "AGENTS.md", "CLAUDE.md", "llms.txt"];
 
 /**
@@ -63,7 +63,7 @@ function collectFiles(): string[] {
   return files;
 }
 
-test("no em or en dashes in src, bin, or top-level docs", () => {
+test("no em or en dashes in src, bin, docs, or top-level docs", () => {
   const offenders: Array<{ file: string; line: number; text: string }> = [];
   for (const abs of collectFiles()) {
     const rel = path.relative(REPO_ROOT, abs);

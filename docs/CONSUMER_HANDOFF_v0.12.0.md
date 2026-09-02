@@ -1,4 +1,4 @@
-# Consumer handoff — build-websites-tools v0.12.0 (PROPOSED, NOT YET PUBLISHED)
+# Consumer handoff: build-websites-tools v0.12.0 (PROPOSED, NOT YET PUBLISHED)
 
 **Status at time of writing: `READY_FOR_REVIEW`. Nothing is pushed, merged, or tagged.**
 Do not treat this document as evidence that the version exists.
@@ -7,10 +7,10 @@ Do not treat this document as evidence that the version exists.
 |---|---|
 | Proposed version | `0.12.0` |
 | Proposed tag | `v0.12.0` |
-| Tag commit SHA | **not yet created** — would be the merge commit of `feat/conversion-contract-c1-fail-closed` on `main` |
+| Tag commit SHA | **not yet created**; would be the merge commit of `feat/conversion-contract-c1-fail-closed` on `main` |
 | Reviewed branch HEAD | `bcf9bd0f01eee412986802d5ec308f561899661a` |
 | Base | `b4b0c127c42b0cf067c24788a7552ccca61bf6d2` (= `v0.11.3` = `origin/main`) |
-| Rollback version | **`v0.11.3`** — a consumer that hits trouble reverts its dependency to `github:drjliddy-max/build-websites-tools#v0.11.3` and reinstalls |
+| Rollback version | **`v0.11.3`**; a consumer that hits trouble reverts its dependency to `github:drjliddy-max/build-websites-tools#v0.11.3` and reinstalls |
 
 ## What changed
 
@@ -37,7 +37,7 @@ relay returned `{ok:true}` and GA4 returned `204`. No status code could reveal i
 
 `NaN`, `Infinity` and `-Infinity` are `typeof "number"` but `JSON.stringify` emits them as
 `null`, so an unguarded numeric param reached GA4 as a null and its metric was lost with no
-error. They are now omitted. `0` and `false` are preserved — they are falsy but valid.
+error. They are now omitted. `0` and `false` are preserved; they are falsy but valid.
 
 **A malformed PARAM drops; it never costs the EVENT it belongs to.**
 
@@ -55,7 +55,7 @@ returns the same `Request -> Response` handler.
 `measurementIdEnvKeys` compiles and behaves identically, *provided its deployed environment
 does not populate two declared keys with different values*.
 
-**This document does not assert that any specific consumer is compatible — including
+**This document does not assert that any specific consumer is compatible, including
 `bmj-marketing`.** Compatibility depends on deployed environment values, which are not
 inspectable from source. **Each consumer must install the artifact and verify
 independently.**
@@ -72,7 +72,7 @@ npm run gate:conversion-instrumentation-source
 Then, against the deployment, confirm `/api/track` does **not** return 503 for an
 allowlisted event. A 503 naming two keys means that environment populates both with
 different values: set exactly one, or make them identical. **Do not work around it by
-pinning back to v0.11.3 and leaving the ambiguity in place — v0.11.3 will keep silently
+pinning back to v0.11.3 and leaving the ambiguity in place: v0.11.3 will keep silently
 choosing, which is the defect.**
 
 ## Known limitations
@@ -96,7 +96,7 @@ Bump the dependency and refresh the lockfile:
 
 Recommended, not required by this release: declare `measurementIdEnvKeys` explicitly rather
 than inheriting defaults, so the accepted key set is visible in the repository. Do **not**
-add aliases "for compatibility" — every additional accepted key is one more thing that can
+add aliases "for compatibility": every additional accepted key is one more thing that can
 disagree.
 
 Canonical keys: server `GA4_MEASUREMENT_ID`, public `NEXT_PUBLIC_GA_MEASUREMENT_ID`. The
