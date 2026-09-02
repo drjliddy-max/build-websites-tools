@@ -33,6 +33,7 @@
 import { JSDOM } from "jsdom";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ensureBaseUrlReady } from "./ensure-base-url";
 
 export type CheckResult = {
@@ -491,10 +492,9 @@ async function main(): Promise<void> {
 // Skip CLI launch when imported by a test runner.
 // import.meta.url and process.argv[1] differ only when this module is the
 // entry point; when imported, process.argv[1] is the test runner.
-const isCli =
-  import.meta.url === `file://${process.argv[1]}` ||
-  import.meta.url.endsWith(process.argv[1] ?? "");
-if (isCli) {
+const invokedDirectly =
+  !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
   try {
     await main();
   } catch (err) {

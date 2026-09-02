@@ -15,6 +15,8 @@
  * Operator directive 2026-05-11: 100% of rules must pass before any page
  * counts as cherry-pick-complete. No "we'll fix it later."
  */
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 import { ensureBaseUrlReady } from "./ensure-base-url";
 import { loadGateConfig, type GateConfig } from "./load-config";
@@ -754,9 +756,17 @@ async function main() {
   }
 }
 
-try {
-  await main();
-} catch (err) {
-  console.error(err);
-  process.exit(1);
+// Entry-point guard (docs/GATE_MODULE_CONTRACT.md). Before this, importing the
+// module ran the whole gate as a side effect, which is why it had no unit-test
+// file: the defect suppressed the evidence of itself.
+const invokedDirectly =
+  !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) {
+  try {
+    await main();
+  } catch (err) {
+    console.error(err);
+    process.exit(1);
+  }
 }

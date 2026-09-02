@@ -57,13 +57,11 @@ const srcDir = path.join(here, "..");
  * goes red telling you to delete the line. An exception cannot silently become
  * permanent.
  *
- * gate-seo.ts: self-executes at top level (no guard of either idiom). Classified
- * 2026-08-11 as a separate pre-existing defect, deliberately NOT repaired in the
- * gate-ada lane that found it. It is the only gate with no unit-test file, which
- * is the same symptom gate-ada had. Repair = add the canonical guard, then remove
- * this entry.
+ * History: gate-seo.ts was listed here from 2026-08-11 (self-executed at top
+ * level, no guard of either idiom) until it received the canonical guard. The
+ * set is empty; keep it, so the next exception has a tracked home.
  */
-const KNOWN_SELF_EXECUTING = new Set(["gate-seo.ts"]);
+const KNOWN_SELF_EXECUTING = new Set<string>();
 
 let importerPath: string;
 let tsxLoader: string;

@@ -4,6 +4,8 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+- `gates`: `gate-seo` gains the canonical entry-point guard (it self-executed on import; tracked exception `KNOWN_SELF_EXECUTING` is now empty). The four modules on the older `isCli` idiom converge on the canonical guard. No behavior change when invoked from the CLI.
+- `tests`: the no-long-dashes guard now scans `docs/` as well as `src`, `bin` and the top-level docs; the one offender (`docs/CONSUMER_HANDOFF_v0.12.0.md`) is repaired.
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.
 - `docs`: GitHub Releases published for every tag v0.2.0 through v0.4.1, notes sourced from this changelog.
 
