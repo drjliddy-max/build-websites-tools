@@ -108,7 +108,7 @@ export class GenerationError extends Error {
  * Build the instruction from the site's registered context. Nothing here is
  * site-coded: every site-specific value arrives through `site`.
  */
-export function buildPrompt({ site, keyword, supportingKeywords = [], occurrence, history, constraints }) {
+export function buildPrompt({ site, keyword, supportingKeywords = [], occurrence, history, constraints, plannedTopic = null }) {
   const ctx = site.contentContext;
   const prohibited = [...new Set([...(ctx.prohibitedTerms ?? [])])];
 
@@ -120,6 +120,8 @@ export function buildPrompt({ site, keyword, supportingKeywords = [], occurrence
     ctx.expertise ? `EXPERTISE ANCHOR: ${ctx.expertise}` : null,
     "",
     `PRIMARY KEYWORD: ${keyword}`,
+    plannedTopic ? `SCHEDULED TOPIC: ${plannedTopic.title}. Write this topic, not an alternative.` : null,
+    plannedTopic?.description ? `SCHEDULED BRIEF: ${plannedTopic.description}` : null,
     supportingKeywords.length ? `SUPPORTING KEYWORDS: ${supportingKeywords.join("; ")}` : null,
     `PUBLICATION DATE: ${occurrence}`,
     "",
@@ -465,6 +467,7 @@ export async function generateArticle({
   site,
   keyword,
   supportingKeywords = [],
+  plannedTopic = null,
   occurrence,
   history = { slugs: [], titles: [] },
   provider,
@@ -475,7 +478,7 @@ export async function generateArticle({
   if (!provider || typeof provider.complete !== "function") {
     throw new GenerationError("A provider with complete() is required.");
   }
-  const basePrompt = buildPrompt({ site, keyword, supportingKeywords, occurrence, history, constraints });
+  const basePrompt = buildPrompt({ site, keyword, supportingKeywords, occurrence, history, constraints, plannedTopic });
   const startedAt = new Date().toISOString();
   const attempts = [];
   let prompt = basePrompt;
@@ -486,7 +489,8 @@ export async function generateArticle({
     const parsed = parseModelJson(await provider.complete(prompt));
     article = {
       title: parsed.title.trim(),
-      slug: slugify(parsed.title),
+      // A scheduled URL is input identity, not a model-generated headline.
+      slug: plannedTopic?.slug ?? slugify(parsed.title),
       metaDescription: parsed.metaDescription.trim(),
       body: assembleBody(parsed),
       imageQuery: parsed.imageQuery.trim(),

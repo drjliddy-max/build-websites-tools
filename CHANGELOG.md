@@ -4,6 +4,14 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-09-21
+
+- `blog-writer`: use the scheduled queue topic and preassigned slug before generation; refuse ambiguous or malformed scheduled identity. Preserve publication identity and content validation guards.
+- `tests`: reproduce the September 10 scheduled-topic identity failure and reject ambiguous queue rows before generation.
+- Recovery requires separate consumer adoption and a fresh scheduled publication proof; releasing this package alone does not establish production recovery.
+
+## Earlier unreleased maintenance
+
 - `gates`: `gate-seo` gains the canonical entry-point guard (it self-executed on import; tracked exception `KNOWN_SELF_EXECUTING` is now empty). The four modules on the older `isCli` idiom converge on the canonical guard. No behavior change when invoked from the CLI.
 - `tests`: the no-long-dashes guard now scans `docs/` as well as `src`, `bin` and the top-level docs; the one offender (`docs/CONSUMER_HANDOFF_v0.12.0.md`) is repaired.
 - `ci`: public GitHub Actions workflow (`.github/workflows/ci.yml`) running typecheck + the full detection-pattern test suite on every push and PR, with a README badge. The test-suite claim is now continuously reproduced in public, per the trust-stack reproducibility rule. Companion workflow on [bwt-sample-site](https://github.com/drjliddy-max/bwt-sample-site) runs all five gates end to end weekly and on push.

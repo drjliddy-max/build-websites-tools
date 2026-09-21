@@ -96,13 +96,13 @@ Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/b
      them fails the build. Version history elsewhere in this file is exempt. -->
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.29.0"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.29.1"
 ```
 
 ```jsonc
 // package.json
 "devDependencies": {
-  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.29.0"
+  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.29.1"
 }
 ```
 
@@ -112,9 +112,9 @@ npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.29.0"
 
 | You are | Pin | Why |
 |---|---|---|
-| A new consumer | `v0.27.0` | Latest stable published tag. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
-| An existing consumer on `v0.11.x` | `v0.27.0`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
-| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.27.0` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
+| A new consumer | `v0.29.1` | Release pin; confirm the tag exists before installation. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
+| An existing consumer on `v0.11.x` | `v0.29.1`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
+| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.29.1` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
 | A consumer with no `/api/track` relay | any | The GA4 contract does not apply to you. `bwt-sample-site` is deliberately on `v0.9.0` for this reason. |
 
 ### Release semantics: how a pin actually takes effect
@@ -357,7 +357,7 @@ No opt-out flag. The check is enforced because a portfolio site previously shipp
 
 ## Status
 
-`v0.27.0`. Eight gate executables shipped: the six leaves, the `gate-dashboard-parity` meta-gate, and the `gate-blog-canonical` estate gate. The canonical list is the machine-checked table in [The gate set](#the-gate-set). Tagged for pin-by-version consumption, and active on every site in the **Used by** list above.
+`v0.29.1`. Eight gate executables included: the six leaves, the `gate-dashboard-parity` meta-gate, and the `gate-blog-canonical` estate gate. The canonical list is the machine-checked table in [The gate set](#the-gate-set). Release publication and consumer adoption are separate. Confirm the release tag and each consumer lockfile before asserting adoption.
 
 Portfolio adoption is deliberately **not** uniform, and that is not drift: `bwt-sample-site` is pinned to `v0.9.0` because it ships no conversion relay, and consumers advance only when a release changes something they exercise. What matters is that every pin is intentional and recorded, not that every pin is equal.
 

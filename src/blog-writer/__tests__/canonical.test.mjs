@@ -1239,3 +1239,40 @@ test("INTEGRATION: the proof retains evidence explaining the verdict", async () 
     "a verdict must be explainable without re-running an investigation");
   assert.equal(r.proof.verification.dimensions.ARTICLE_DISCOVERABLE.outcome, "PASS");
 });
+
+// September 10 production failure: the resolver ignored the scheduled topic and
+// generated a different article, correctly refused later by the publisher.
+test("September 10 Site Clinic queue supplies topic and stable slug before generation", async () => {
+  const planned = {
+    target_date: "2026-09-10", slug: "accessibility-drift-between-audits",
+    title: "Accessibility Drift Between Audits", keywords: ["accessibility drift", "recurring accessibility checks"],
+    description: "An accessibility audit describes one day. Sites change every week.",
+  };
+  const deps = pipelineDeps({
+    schedule: { schedule: { cadence_anchor: "2026-08-13" }, published: [], queue: [planned] },
+    modelOutput: modelResponse({ title: "Accessibility Drift: Changes Between Website Audits", metaDescription: GOOD_ARTICLE.metaDescription,
+      imageQuery: GOOD_ARTICLE.imageQuery, sectionBody: "Accessibility drift between audits needs recurring accessibility checks. ".repeat(18) }),
+  });
+  let prompt;
+  const complete = deps.provider.complete;
+  deps.provider.complete = async (input) => { prompt = input; return complete(input); };
+  deps.keywords.load = async () => { throw new Error("Queued occurrences must not select another keyword"); };
+  const result = await runBlogWriterPipeline({ siteId: "qirofit", occurrence: "2026-09-10", mode: "dry-run" }, deps);
+  assert.equal(result.ok, true, JSON.stringify(result.proof?.failure));
+  assert.equal(result.article.slug, planned.slug);
+  assert.equal(result.article.keyword, "accessibility drift");
+  assert.equal(result.proof.provenance.topicProvenance, "SCHEDULED_QUEUE");
+  assert.match(prompt, /Accessibility Drift Between Audits/);
+  assert.match(prompt, /An accessibility audit describes one day/);
+});
+
+test("ambiguous queued occurrence refuses before keyword, model or image work", async () => {
+  const row = { target_date: "2026-09-10", slug: "first-topic", title: "First topic", keywords: ["first topic"] };
+  const deps = pipelineDeps({ modelOutput: "{}", schedule: { schedule: { cadence_anchor: "2026-08-13" }, published: [], queue: [row, { ...row, slug: "second-topic" }] } });
+  let modelCalls = 0;
+  deps.provider.complete = async () => { modelCalls++; return "{}"; };
+  const result = await runBlogWriterPipeline({ siteId: "qirofit", occurrence: "2026-09-10", mode: "dry-run" }, deps);
+  assert.equal(result.ok, false);
+  assert.equal(result.proof.failure.stage, "resolve-topic");
+  assert.equal(modelCalls, 0);
+});
