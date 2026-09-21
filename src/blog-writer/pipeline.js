@@ -260,18 +260,32 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
       slugs: published.map((entry) => entry.slug).filter(Boolean),
       titles: published.map((entry) => entry.title).filter(Boolean),
     };
-    const supply = await deps.keywords.load(site);
-    const primary = Array.isArray(supply) ? supply : supply.primary ?? [];
-    const secondary = Array.isArray(supply) ? [] : supply.secondary ?? [];
-    const topic = resolveTopic({
-      site,
-      primary,
-      secondary,
-      history: {
-        titles: history.titles,
-        keywords: published.flatMap((entry) => entry.keywords ?? []),
-      },
-    });
+    // The queued row is the topic authority for this occurrence. Selecting an
+    // unrelated CSV keyword caused all five September 10 writer failures.
+    const queued = (schedule.queue ?? []).filter((entry) => entry.target_date === occurrence);
+    if (queued.length > 1) {
+      throw new PipelineError("resolve-topic", `Multiple queue rows target ${occurrence}; refusing ambiguous topic identity.`);
+    }
+    const planned = queued[0] ?? null;
+    let topic;
+    if (planned) {
+      if (typeof planned.slug !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(planned.slug)
+          || typeof planned.title !== "string" || !planned.title.trim()) {
+        throw new PipelineError("resolve-topic", "Scheduled topic requires a valid slug and nonempty title.");
+      }
+      const keywords = Array.isArray(planned.keywords)
+        ? planned.keywords.filter((keyword) => typeof keyword === "string" && keyword.trim()) : [];
+      topic = { keyword: keywords[0] ?? planned.title, supporting: keywords.slice(1),
+        provenance: "SCHEDULED_QUEUE", source: site.publication.schedulePath };
+    } else {
+      const supply = await deps.keywords.load(site);
+      topic = resolveTopic({
+        site,
+        primary: Array.isArray(supply) ? supply : supply.primary ?? [],
+        secondary: Array.isArray(supply) ? [] : supply.secondary ?? [],
+        history: { titles: history.titles, keywords: published.flatMap((entry) => entry.keywords ?? []) },
+      });
+    }
     record("resolve-topic", true, { keyword: topic.keyword, provenance: topic.provenance });
 
     // ── 6/7. context + generation ─────────────────────────────────────────
@@ -289,6 +303,7 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
     const generationArgs = {
       site,
       keyword: topic.keyword,
+      plannedTopic: planned,
       supportingKeywords: topic.supporting ?? [],
       occurrence,
       history,

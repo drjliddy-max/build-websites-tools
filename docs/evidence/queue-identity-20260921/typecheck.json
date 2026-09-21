@@ -1,0 +1,17 @@
+{
+  "schema_version": "proof-evidence/v1",
+  "recorded_at": "2026-09-21T13:04:00Z",
+  "project_id": "bwt-alert-truth-20260921",
+  "command_class": "verification",
+  "command_digest": "sha256:982c1455e5e73c8ccab2d70a550c972e2841a0582596e26a7fcc53b80e14aa14",
+  "command_risk": "sensitive",
+  "capture_mode": "metadata-only",
+  "exit_code": 0,
+  "verdict": "pass",
+  "duration_ms": 1000,
+  "working_tree_clean": false,
+  "head_sha": "4809163",
+  "stdout_capture": "omitted",
+  "stderr_capture": "omitted",
+  "redaction_findings": []
+}
