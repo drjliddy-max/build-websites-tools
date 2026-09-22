@@ -29,13 +29,18 @@
  * regardless (CI `if: always()`). A gate with no fragment is recorded as
  * `not_run`, never as absent-meaning-fine and never as a pass.
  *
- * CONCURRENCY POLICY (Phase 1): last validated writer wins.
- * Each merger writes a uniquely-named temp file in the final directory and
- * atomically renames it over snapshot.json. Two concurrent mergers therefore
- * both succeed and the later rename wins; no reader can observe truncated or
- * mixed JSON, because a reader either sees the old inode or the new one. No
- * lock is taken: a lock adds a stale-lock failure mode to a tool whose entire
- * job is to not disturb the build.
+ * CONCURRENCY POLICY (Phase 1): SERIALIZED by an exclusive lock.
+ *
+ * Atomic rename protects bytes but not ORDER, so a slower merger reading older
+ * fragments could otherwise overwrite newer evidence - "last writer wins" is
+ * not a guarantee unless "last" is mechanically defined. Mergers therefore take
+ * an exclusive lock in the artifact directory and a merger that cannot take it
+ * exits 1 rather than racing.
+ *
+ * A held lock is reclaimed only when its owning process is gone, or - when no
+ * owner can be identified at all - once it has aged past LOCK_STALE_MS. A live
+ * owner is never displaced, however long its merge runs. See acquireMergeLock
+ * in ./snapshot for the full policy.
  */
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";

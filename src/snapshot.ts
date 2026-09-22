@@ -48,6 +48,7 @@
  */
 
 import {
+  readFileSync,
   mkdirSync,
   renameSync,
   unlinkSync,
@@ -473,6 +474,89 @@ export function writeConfinedFile(
  */
 export const LOCK_STALE_MS = 60_000;
 
+export type LockMetadata = { v: number; pid: number; nonce: string; startedAt: string };
+
+/**
+ * Is a process still running?
+ *
+ * signal 0 performs the permission/existence check without delivering a
+ * signal. ESRCH means no such process. EPERM means the process EXISTS but
+ * belongs to another user - that is ALIVE, and treating it as dead would be
+ * exactly the mistake this function exists to prevent. Any other error is
+ * ambiguous and reported as such so the caller can fail closed.
+ */
+export function isProcessAlive(pid: number): "alive" | "dead" | "unknown" {
+  if (!Number.isInteger(pid) || pid <= 0) return "unknown";
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return "dead";
+    if (code === "EPERM") return "alive";
+    return "unknown";
+  }
+}
+
+function readLockMetadata(lockPath: string): LockMetadata | null {
+  try {
+    const parsed = JSON.parse(readFileSync(lockPath, "utf8")) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const m = parsed as Record<string, unknown>;
+    /*
+     * A usable OWNER is a positive integer pid - nothing else. The nonce is
+     * optional here on purpose: a lock written by an older build, or by any
+     * writer that omits it, still names a process we must not displace while it
+     * is alive. Requiring the nonce to parse at all was itself a hole: such a
+     * lock fell into the "no identifiable owner" branch and was reclaimed on
+     * age, which is precisely the steal this policy exists to prevent.
+     *
+     * The nonce's job is narrower: proving OUR ownership at release time.
+     */
+    if (typeof m.pid !== "number" || !Number.isInteger(m.pid) || m.pid <= 0) return null;
+    return {
+      v: typeof m.v === "number" ? m.v : 1,
+      pid: m.pid,
+      nonce: typeof m.nonce === "string" ? m.nonce : "",
+      startedAt: typeof m.startedAt === "string" ? m.startedAt : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Exclusive merge lock.
+ *
+ * "Last validated writer wins" was rejected in review because "last" was never
+ * mechanically defined: atomic rename protects bytes but not ORDER, so a
+ * slower merger reading older fragments could overwrite a newer snapshot.
+ * Mergers are therefore SERIALIZED rather than raced.
+ *
+ * RECLAMATION POLICY - the part a second review found broken.
+ *
+ * The first implementation wrote the owner's pid into the lock and then never
+ * read it back: reclamation was purely `mtime > LOCK_STALE_MS -> unlink`. A
+ * legitimate merge running longer than the stale window therefore had its lock
+ * STOLEN by a second merger, which reintroduced exactly the concurrency the
+ * lock exists to prevent. Age alone cannot distinguish an abandoned lock from
+ * a slow live one. Ownership is now consulted:
+ *
+ *   owner ALIVE                  -> refuse, regardless of age. A long merge is
+ *                                   not an abandoned one.
+ *   owner DEAD                   -> reclaim immediately. There is nothing left
+ *                                   to protect, and waiting out the window
+ *                                   only delays recovery.
+ *   ownership UNKNOWN            -> refuse. Fail closed rather than guess.
+ *   metadata absent/unparseable  -> reclaim only once aged out. No owner can be
+ *                                   identified, so there is nobody to protect;
+ *                                   refusing forever would be a permanent
+ *                                   deadlock with no recovery path.
+ *
+ * A random `nonce` accompanies the pid so that (a) pid reuse cannot make an
+ * unrelated live process look like the owner forever, and (b) release() can
+ * prove it still holds the lock it took.
+ */
 export function acquireMergeLock(
   artifactRoot: string,
 ): { ok: true; release: () => void } | { ok: false; reason: string } {
@@ -483,43 +567,87 @@ export function acquireMergeLock(
     return { ok: false, reason: `could not create artifact directory: ${(err as Error).message}` };
   }
 
-  const attempt = (): number | null => {
+  const nonce = randomBytes(12).toString("hex");
+  const payload = JSON.stringify({
+    v: 1,
+    pid: process.pid,
+    nonce,
+    startedAt: new Date().toISOString(),
+  } satisfies LockMetadata);
+
+  const attempt = (): boolean => {
     try {
-      return openSync(lockPath, "wx", 0o600);
+      const fd = openSync(lockPath, "wx", 0o600);
+      try {
+        writeSync(fd, Buffer.from(payload));
+      } finally {
+        closeSync(fd);
+      }
+      return true;
     } catch {
-      return null;
+      return false;
     }
   };
 
-  let fd = attempt();
-  if (fd === null) {
-    // Stale-lock policy: a lock older than LOCK_STALE_MS is assumed abandoned
-    // by a killed merger. Bounded and explicit - never an unbounded wait.
-    try {
-      const age = Date.now() - statSync(lockPath).mtimeMs;
-      if (age > LOCK_STALE_MS) {
-        unlinkSync(lockPath);
-        fd = attempt();
+  let held = attempt();
+
+  if (!held) {
+    const meta = readLockMetadata(lockPath);
+
+    if (meta === null) {
+      // No identifiable owner. Only age can justify reclamation here.
+      let aged = false;
+      try {
+        aged = Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS;
+      } catch {
+        aged = false;
       }
-    } catch {
-      /* fall through to refusal */
+      if (!aged) {
+        return { ok: false, reason: "another merge is in progress for this repository" };
+      }
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        /* someone else won the race; the retry below will refuse */
+      }
+      held = attempt();
+    } else {
+      const liveness = isProcessAlive(meta.pid);
+      if (liveness === "alive") {
+        return {
+          ok: false,
+          reason: `another merge is in progress for this repository (owner pid ${meta.pid} is still running)`,
+        };
+      }
+      if (liveness === "unknown") {
+        return {
+          ok: false,
+          reason: `another merge may be in progress and its owner could not be verified; refusing to reclaim`,
+        };
+      }
+      // Owner is gone. Reclaim without waiting out the window.
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        /* raced; the retry below will refuse */
+      }
+      held = attempt();
     }
   }
-  if (fd === null) {
+
+  if (!held) {
     return { ok: false, reason: "another merge is in progress for this repository" };
   }
-
-  try {
-    writeSync(fd, Buffer.from(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })));
-  } catch {
-    /* metadata is advisory */
-  }
-  closeSync(fd);
 
   return {
     ok: true,
     release: () => {
+      // Only ever remove OUR lock. If this lock was reclaimed by someone else
+      // (or replaced after a crash), unlinking blindly would delete the
+      // successor's lock and let a third merger in.
       try {
+        const current = readLockMetadata(lockPath);
+        if (current !== null && current.nonce !== nonce) return;
         unlinkSync(lockPath);
       } catch {
         /* already gone */
