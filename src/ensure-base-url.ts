@@ -81,7 +81,23 @@ export async function ensureBaseUrlReady(config: GateConfig): Promise<() => Prom
     }
   };
 
+  // Last-resort cleanup for any exit that bypasses the caller's `finally`.
+  // process.exit() does not unwind the stack, so a gate that calls it inside
+  // `try { ... } finally { await stopServer(); }` never runs stopServer. The
+  // detached server then outlives the gate, holds the inherited stdout/stderr
+  // pipes open, and any caller waiting on the gate through execFile never
+  // gets its callback. Observed 2026-09-24 (site-monitor#273): gate-seo FAILed,
+  // exited via process.exit(1), and the book + ADA blog-writer publish runs
+  // (participation-effect-site 35974056482, adaauditreport-web 35974055927)
+  // hung silently until their 20-minute job timeout. 'exit' listeners must be
+  // synchronous, so this sends SIGKILL; the graceful path is cleanup() below.
+  const killOnExit = () => {
+    killProcessGroup("SIGKILL");
+  };
+  process.once("exit", killOnExit);
+
   const cleanup = async () => {
+    process.removeListener("exit", killOnExit);
     // Kill the process GROUP, not just the spawned wrapper. launchCommand is
     // usually an npm wrapper whose grandchild (e.g. next-server) survives a
     // direct child.kill, keeps the inherited stdio pipes open, and hangs any
