@@ -748,7 +748,11 @@ async function main() {
 
     if (totalFailures > 0) {
       console.error(`\ngate:seo  FAIL: ${totalFailures} failure(s)`);
-      process.exit(1);
+      // Set the code and return rather than exiting here: process.exit() skips
+      // the finally below, orphaning the dev server ensureBaseUrlReady() started
+      // and hanging execFile callers (site-monitor#273). Same rule gate-ada follows.
+      process.exitCode = 1;
+      return;
     }
     console.log("\ngate:seo  PASS");
   } finally {

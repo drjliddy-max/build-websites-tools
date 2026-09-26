@@ -190,7 +190,10 @@ async function main() {
         if (browserSession) {
           await browserSession.browser.close();
         }
-        process.exit(1);
+        // exitCode + return, not process.exit(): exiting here skips the finally
+        // below and orphans the launched dev server (site-monitor#273).
+        process.exitCode = 1;
+        return;
       }
     }
 
@@ -223,7 +226,8 @@ async function main() {
       console.error(
         `\ngate:ada  FAIL: ${totalBlocking} blocking violation(s)${modeSuffix}`,
       );
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     console.log(`\ngate:ada  PASS${modeSuffix}`);
   } finally {
