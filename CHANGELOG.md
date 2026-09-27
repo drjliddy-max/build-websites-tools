@@ -4,6 +4,12 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+## [0.29.2] - 2026-09-27
+
+- `gates`: `gate-seo` (FAIL) and `gate-ada` (route load failure, blocking violations) no longer leave via `process.exit(1)` inside the `try` whose `finally` stops the server `ensureBaseUrlReady()` launched. They set `process.exitCode = 1` and return, so the server is stopped and the command still exits 1. `ensureBaseUrlReady()` also registers a last-resort `exit` hook that SIGKILLs the launched process group. Before this, a failing gate orphaned `next dev`, which held the caller's stdout pipe open; the blog-writer publisher's `execFile("npm", ["run", "gate:seo"])` never returned and the 2026-09-24 book and ADA publish runs hung until their 20-minute timeout (site-monitor#273, FND-0091). Landed in #42.
+- `tests`: `gate-cleanup-on-exit.test.ts` runs the real `gate-seo` and `gate-ada` binaries through `execFile("npm", ["run", ...])` against a launched fixture site and asserts bounded termination, the exit code (1 on failure, 0 on pass), a dead server, and that the server received the gate's own SIGTERM. Each defect path hangs on v0.29.1 source; with only the exit hook, the SIGTERM assertion still fails.
+- Consumers adopt this only by advancing their pin and reinstalling. Releasing the tag does not change any site.
+
 ## [0.29.1] - 2026-09-21
 
 - `blog-writer`: use the scheduled queue topic and preassigned slug before generation; refuse ambiguous or malformed scheduled identity. Preserve publication identity and content validation guards.
