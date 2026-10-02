@@ -2,16 +2,18 @@
 
 Claude-Code-specific notes for this repository. For general AI-agent guidance, see `AGENTS.md`.
 
+Inherits `~/.claude/CLAUDE.md` and `/Users/johnliddy/Desktop/Projects/CLAUDE.md`. This file adds only repo-specific rules.
+
 ## Repository purpose
 
 This is `build-websites-tools`, a build-time enforcement gate package consumed by every owned site in John Liddy's portfolio. It enforces WCAG 2.1 AA, Google indexing rules, and an AI Instrumentation Contract at `prebuild`. Failures block deploys.
 
 ## When asked to modify this repo
 
-1. Read the README first. It states what the package is, what each gate enforces, and the schema for `gate.config.json`. Note the gate table: **`gate:all` is three commands and runs seven gates**, because `gate-dashboard-parity` is a meta-gate that spawns four leaves. Do not infer from a consuming site's `scripts` block that a gate is unwired; three sessions have filed that false finding.
+1. Read the README first. It states what the package is, what each gate enforces, and the schema for `gate.config.json`. Note the gate table: **`gate:all` is three commands and runs seven gates**, because `gate-dashboard-parity` is a meta-gate that spawns four leaves. Do not infer from a consuming site's `scripts` block that a gate is unwired.
 2. Read `AGENTS.md` for the standard onboarding flow.
-3. Read the source of the specific gate before modifying it: `src/gate-ada.ts`, `src/gate-seo.ts`, `src/gate-ai-instrumentation.ts`, `src/gate-ai-instrumentation-source.ts`, `src/load-config.ts`.
-4. Run the tests: `npm test`. They live in `src/__tests__/` and use the Node test runner.
+3. Read the source of the specific gate before modifying it. Gate sources are `src/gate-*.ts` (shared config loading: `src/load-config.ts`); the blog-writer estate gate is `bin/gate-blog-canonical.mjs` over `src/blog-writer/`. The `package.json` `bin` field is the authoritative gate list.
+4. Run the tests: `npm test`. The `test` script in `package.json` defines the set (currently `src/__tests__/` and `src/blog-writer/__tests__/`, Node test runner via tsx).
 5. Run typecheck: `npm run typecheck`.
 
 ## When asked to add a gate
@@ -34,15 +36,10 @@ Same flow, but the test for the bug case is mandatory before the fix. Reproduce 
 
 ## Consumers
 
-Live consumers (every commit here can affect every one of these on next deploy):
+A commit or tag here changes no consumer by itself. Consumers install via an immutable GitHub tag pin (`github:drjliddy-max/build-websites-tools#vX.Y.Z`); a change reaches a consumer only when that consumer's pin is advanced **and** reinstalled so its lockfile's resolved SHA moves. A tag is a release, not adoption.
 
-- siteclinic.io
-- liddypodiatryandprevention.com
-- babymilestonejournal.com
-- adaauditreport.com
-- theparticipationeffect.com
-- daily-rise.com
-- jeffrystein.com
+- Consumer roster and per-consumer adoption: `cd /Users/johnliddy/Desktop/Projects/portfolio-os && npm run estate:drift` (reads each consumer's `origin/main`). Do not hand-maintain a consumer list here.
+- Estate-approved release: portfolio-os `sources/estate/builder-release.json`, advanced only by operator approval.
 
 A change that tightens a gate (new failure mode) is a breaking change for any consumer whose current site violates the new rule. Bump the version accordingly and document the migration path in the commit body.
 
@@ -54,5 +51,5 @@ This package exists in part to eliminate the previous vendored-tools drift class
 
 - Do not skip tests or typecheck before committing. `npm test && npm run typecheck` is the local gate.
 - Do not introduce gate behavior that depends on filesystem paths outside the consuming site's working directory. Gates must be portable across operating systems and CI runners.
-- Do not emit info-level output on success. The bin script should be silent on success and loud on failure.
-- Do not pin Node to a specific minor version. The package targets Node 20+; require what the language and dependencies need.
+- Exit status is the contract: zero on pass, non-zero on any failure, and failure output must name the failing check. Gates currently print a short scope/summary line on success (e.g. `gate:sitemap-source  PASS: ...`), and the `gate-dashboard-parity` meta-gate prints a composition banner and a section per child gate; keep success output to that kind of summary, not per-item noise.
+- Do not pin Node to a specific minor version. `package.json` declares no `engines` field; CI (`.github/workflows/ci.yml`) runs Node 22. Require only what the language and dependencies need.
