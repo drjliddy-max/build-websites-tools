@@ -4,7 +4,7 @@ Standardized instructions for AI agents (Claude Code, Codex, Cursor, Aider, cust
 
 ## What this package is
 
-`build-websites-tools` is a set of four build-time enforcement gates for production websites. The gates fail the build before deploy if the site violates WCAG 2.1 AA accessibility, Google indexing rules, or the AI Instrumentation Contract (`robots.txt` per-bot rules, `llms.txt`, AI ingestion endpoint, homepage JSON-LD). Every site that adopts this package gates its `prebuild` step on `gate-ada && gate-seo && gate-ai-instrumentation-source && gate-ai-instrumentation`.
+`build-websites-tools` is a set of build-time enforcement gates for production websites. The gates fail the build before deploy if the site violates WCAG 2.1 AA accessibility, Google indexing rules, or the AI Instrumentation Contract (`robots.txt` per-bot rules, `llms.txt`, AI ingestion endpoint, homepage JSON-LD). Consumers wire `prebuild: npm run gate:all` (see the wiring task below). Authoritative gate list: `package.json` `bin` and `README.md#the-gate-set`.
 
 ## When an agent should use this package
 
@@ -19,7 +19,7 @@ Use it when the user is:
 Do NOT use it for:
 
 - Runtime ADA monitoring (use a paid auditor or a runtime axe scan instead).
-- Sites that need only one of the gates and reject the four-gate bundle.
+- Sites that need only one of the gates and reject the gate bundle.
 - Sites with no `gate.config.json` and no willingness to maintain one.
 
 ## Task: wire the gates into an existing site
@@ -60,10 +60,7 @@ Do NOT use it for:
 
 Each gate prints structured failure output naming the file and the rule. Read the error first; do not guess.
 
-- `gate-ada` failure → axe-core violation. The output names the WCAG rule and the offending DOM selector. Fix in the source (markup or styling), do not suppress in the gate.
-- `gate-seo` failure → meta tag, sitemap, or canonical issue. The output names the route and the violated rule. Fix in the source (page metadata, sitemap config, or `robots.txt`).
-- `gate-ai-instrumentation-source` failure → a matrix §17.3.1.2 surface is missing from source (no `robots.txt`, no `llms.txt`, no JSON-LD baseline, or no AI ingestion endpoint). Add the surface.
-- `gate-ai-instrumentation` failure → the live build is missing one of those surfaces. Usually means a route handler returns wrong content-type or wrong body. Inspect the failing URL.
+What each gate checks is in `README.md#the-gate-set`; known false-alarm shapes are in `README.md#common-pitfalls`. Fix the violation in the site's source, never by suppressing it in the gate.
 
 If a gate is producing a false positive (rare), open an issue against this repo with the URL, the gate output, and the expected behavior. Do NOT bypass the gate with `--no-verify` or by removing the prebuild step.
 
@@ -98,7 +95,7 @@ This is enforced by the gate; no opt-out flag exists. The check is in `src/load-
 - Never copy `src/` from this repo into the consuming site. The whole point of the package is that vendoring is over.
 - Never edit files under `node_modules/build-websites-tools/`. Edits do not survive `npm install`.
 - **Never call `main()` at the top level of a `src/gate-*.ts` module.** Every gate is both a CLI and a library: `bin/_run.mjs` spawns it as a subprocess, and the tests import it for its exported helpers. An unguarded `main()` runs the entire gate on import, which makes the module untestable. Guard it with the canonical direct-invocation check in [`docs/GATE_MODULE_CONTRACT.md`](./docs/GATE_MODULE_CONTRACT.md). Enforced by `src/__tests__/gate-import-safety.test.ts`.
-- **Do not conclude a gate is unwired from `package.json` scripts.** `gate:all` names three commands and runs seven: `gate-dashboard-parity` is a meta-gate that spawns four leaves. Three separate sessions have now filed false "this gate runs nowhere" findings from a scripts grep, one of which proposed changing seven production repos for work that did not exist. Read the gate table in `README.md#the-gate-set`, or a real build log.
+- **Do not conclude a gate is unwired from `package.json` scripts.** `gate:all` names three commands and runs seven: `gate-dashboard-parity` is a meta-gate that spawns four leaves. Read the gate table in `README.md#the-gate-set`, or a real build log.
 
 ## Where to read more
 

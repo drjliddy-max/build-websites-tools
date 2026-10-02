@@ -2,7 +2,7 @@
 
 Claude-Code-specific notes for this repository. For general AI-agent guidance, see `AGENTS.md`.
 
-Inherits `~/.claude/CLAUDE.md` and `/Users/johnliddy/Desktop/Projects/CLAUDE.md`. This file adds only repo-specific rules.
+Inherits `~/.claude/CLAUDE.md` and `Projects/CLAUDE.md`. This file adds only repo-specific rules.
 
 ## Repository purpose
 
@@ -27,8 +27,9 @@ When adding a gate:
 3. Update `package.json` `bin` field to register the new gate.
 4. Add tests under `src/__tests__/gate-<name>.test.ts`. Test the positive path, the negative path, and at least one edge case.
 5. Update `README.md`'s gate table.
-6. Bump the version in `package.json` (minor bump for a new gate, patch for a bug fix).
-7. Tag the release: `git tag v0.X.0 && git push --tags`.
+6. Bump the version in `package.json` (minor bump for a new gate, patch for a bug fix), update the install pins inside the README `RELEASE-PIN` block to match (enforced by `src/__tests__/docs-contract.test.ts`), and add a `CHANGELOG.md` entry.
+7. After the PR merges, tag the merged `main` commit: `git tag v0.X.0 <merged-sha> && git push origin v0.X.0`.
+8. Adoption is separate: the estate-approved release advances only by operator approval in portfolio-os `sources/estate/builder-release.json`. A tag here changes no consumer.
 
 ## When asked to fix a gate
 
@@ -38,7 +39,7 @@ Same flow, but the test for the bug case is mandatory before the fix. Reproduce 
 
 A commit or tag here changes no consumer by itself. Consumers install via an immutable GitHub tag pin (`github:drjliddy-max/build-websites-tools#vX.Y.Z`); a change reaches a consumer only when that consumer's pin is advanced **and** reinstalled so its lockfile's resolved SHA moves. A tag is a release, not adoption.
 
-- Consumer roster and per-consumer adoption: `cd /Users/johnliddy/Desktop/Projects/portfolio-os && npm run estate:drift` (reads each consumer's `origin/main`). Do not hand-maintain a consumer list here.
+- Consumer roster and per-consumer adoption: `cd ../portfolio-os && npm run estate:drift` (reads each consumer's `origin/main`). Do not hand-maintain a consumer list here.
 - Estate-approved release: portfolio-os `sources/estate/builder-release.json`, advanced only by operator approval.
 
 A change that tightens a gate (new failure mode) is a breaking change for any consumer whose current site violates the new rule. Bump the version accordingly and document the migration path in the commit body.
