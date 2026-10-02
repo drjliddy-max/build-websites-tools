@@ -25,9 +25,9 @@ Do NOT use it for:
 ## Task: wire the gates into an existing site
 
 1. Read the site's current `package.json` and `gate.config.json` (if any).
-2. Add the dependency:
+2. Add the dependency, pinned to the estate-approved release (the `approved_builder_release` in portfolio-os `sources/estate/builder-release.json`; `cd ../portfolio-os && npm run estate:drift` shows it):
    ```bash
-   npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.27.0"
+   npm install --save-dev "github:drjliddy-max/build-websites-tools#<approved tag>"
    ```
 3. Add scripts to `package.json`. This is the wiring every production consumer
    runs: `gate:all` is THREE commands that run SEVEN gates, because
@@ -69,14 +69,14 @@ If a gate is producing a false positive (rare), open an issue against this repo 
 
 ## Task: upgrade to a newer version
 
-1. Check the latest tag: `git ls-remote --tags https://github.com/drjliddy-max/build-websites-tools | tail -5`
+1. Find the estate-approved release: `approved_builder_release` in portfolio-os `sources/estate/builder-release.json` (or `npm run estate:drift` there). A newer tag in this repo is RELEASE truth only; do not adopt it on a production consumer until the operator advances the approved release.
 2. Update the dependency in `package.json`:
    ```diff
    - "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.3.1"
    + "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.4.0"
    ```
 3. Run `npm install` to fetch the new version.
-4. Run `npm run gate:all`. If any gate now fails that previously passed, the new version added or tightened a rule. Read the failure and fix the site (the new rule is intentional). Do not pin back.
+4. Run `npm run gate:all`. If any gate now fails that previously passed, the new version added or tightened a rule. Read the failure and fix the site (the new rule is intentional). Do not pin back below the approved release.
 5. Commit and push.
 
 ## Required pages
