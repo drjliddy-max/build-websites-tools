@@ -39,6 +39,28 @@
     "provider": "pexels",
     "queryHint": "athlete recovery rehabilitation strength conditioning functional movement cycling running marathon"
   },
+  "publicationEvidence": {
+    "contract": "PUBLICATION_CONTRACT_V1",
+    "declaredAt": "2026-08-28",
+    "note": "Measured on 2026-08-28, not assumed: the index at /blog serves this lane's articles, the homepage links to /blog, and /sitemap.xml lists article URLs. Every dimension below is applicable for this site's architecture. A dimension is marked applicable:false ONLY when the architecture genuinely lacks it - silence would mean UNKNOWN, which fails closed.",
+    "indexSurface": {
+      "path": "/blog"
+    },
+    "discoverySurface": {
+      "path": "/",
+      "mustLinkTo": "/blog"
+    },
+    "sitemap": {
+      "path": "/sitemap.xml"
+    },
+    "heroEvidence": {
+      "source": "rendered-markup",
+      "fallbackMarkers": [
+        "facility-training-floor"
+      ]
+    },
+    "applicability": {}
+  },
   "publication": {
     "adapter": "github-repo-commit",
     "workflowFile": "blog-writer-qirofit-publish.yml",
