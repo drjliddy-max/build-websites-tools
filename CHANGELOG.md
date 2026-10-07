@@ -4,6 +4,19 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-07
+
+- `gates`: NEW `gate-build-determinism-source`. One invariant for now, `noRemoteFontFetch`: no source file may import `next/font/google`, which fetches font files from Google AT BUILD TIME in order to self-host them. `next/font/local` is the supported alternative and is explicitly fine.
+- `why`: a build that reaches out to someone else's server at build time is not a build, it is a bet. It passes on a laptop, fails intermittently in CI, and the failure never names the real cause. Proven on this estate 2026-10-07: qirofit-web failed production (560 font errors, surfaced as `gate:ai-instrumentation FAIL / jsonLd: homepage returned HTTP 500`) and preview (280 errors, every gate PASSED and the real compile failed after them), and siteclinic-web failed GitHub Actions on a DIFFERENT family (`geist_*.module.css`) within the same hour. Two symptoms, one cause, neither naming the font.
+- `blast radius`: SIX of nine consumers imported it, so two thirds of the estate's production builds depended on that fetch. Four had not failed yet; they were unfailed exposed instances, not robust ones. All six are migrated to self-hosted woff2 + `next/font/local`.
+- `cause, with three hypotheses rejected`: not the v0.31.0 pin advance (the first failure predates it, at a commit still pinned v0.29.2); not Next.js drift through the `^16.2.6` caret range (lockfiles pinned 16.2.7 on both sides and local builds passed on 16.2.7); not a Google Fonts outage (the endpoint returned 200 and real `fonts.gstatic.com` URLs throughout). Surviving: identical code and lockfile pass from a residential IP and fail intermittently from cloud builders on TWO independent providers, consistent with rate limiting of shared datacenter IP ranges. Record: #51.
+- `false positives deliberately guarded`: a mention inside a COMMENT is not flagged, which matters because every migrated consumer now carries a comment naming `next/font/google` three times explaining why it must not return. Comments are blanked before matching while strings are preserved, so the module specifier in a real import still matches. Also not flagged: `next/font/local`, a runtime `fetch()` of a Google URL, and anything under `node_modules` or a dot-directory.
+- `measured load-bearing on real code`, not only fixtures: run against siteclinic-web's pre-migration `origin/main` source it FAILS, naming `src/app/layout.tsx:2`; run against all nine consumers' migrated trees it PASSES 9/9.
+- `tests`: 14 cases named after the real sites and the real false positives, covering single-family and two-families-in-one-import shapes, the side-effect / `require` / dynamic-import forms, multi-file reporting, line attribution, and every guarded false positive.
+- `not composed`: deliberately absent from `gate-dashboard-parity` in this release. Six consumers still carry the defect on `origin/main`, so composing now would redden them. Same sequence as v0.30.0 -> v0.31.0: ship uncomposed, fix the estate, re-measure green, then compose.
+- Consumers adopt this only by advancing their pin and reinstalling. Releasing the tag does not change any site.
+
+
 ## [0.31.0] - 2026-10-07
 
 - `gates`: `gate-indexability-source` is now COMPOSED into `gate-dashboard-parity`'s `REQUIRED_READINESS_GATES`. It therefore runs on every production build of every consumer that wires `gate:dashboard-parity`, which is all of them. `gate:all` is still three commands; it now runs eight gates, and the meta-gate spawns five leaves.
