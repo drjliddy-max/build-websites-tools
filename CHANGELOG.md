@@ -4,6 +4,15 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-07
+
+- `gates`: `gate-indexability-source` is now COMPOSED into `gate-dashboard-parity`'s `REQUIRED_READINESS_GATES`. It therefore runs on every production build of every consumer that wires `gate:dashboard-parity`, which is all of them. `gate:all` is still three commands; it now runs eight gates, and the meta-gate spawns five leaves.
+- `why one release later`: v0.30.0 deliberately shipped the gate UNCOMPOSED because three consumers failed it that day (participation-effect-site `/chapter-one`, qirofit-web `/blog`, jeffrystein-web `/the-belief-game`, all undeclared and therefore uncovered). Composing it immediately would have converted a useful new invariant into an estate-wide red build. The precondition for composition was an estate re-measured green, and that is what happened: after participation-effect-site#41, qirofit-web#37 and jeffrystein-web#40 merged and deployed, `gate-indexability-source` was run against all nine consumers freshly synced to `origin/main` and exited 0 on 9/9.
+- `tests`: the `gate-dashboard-parity` no-silent-drop assertion now requires exactly five scripts. That test exists so the composed set cannot change by accident, so it was updated deliberately rather than loosened.
+- `precondition to repeat`: any future addition to `REQUIRED_READINESS_GATES` should follow the same sequence - ship the gate uncomposed, fix the estate, re-measure green on current `origin/main`, then compose. Composing a gate the estate fails reddens every consumer at once.
+- Consumers adopt this only by advancing their pin and reinstalling. Releasing the tag does not change any site.
+
+
 ## [0.30.0] - 2026-10-07
 
 - `gates`: NEW `gate-indexability-source`. Asserts every static route a site ships is deliberately classified: present in `gate.config.json` `routes` (sitemapped, must stay indexable) or in `allowedOffSitemapRoutes` (must resolve to `noindex`). A route in neither fails. Two further invariants: a declared-public route must not carry `noindex`, and a rendering route must not be both robots.txt-`Disallow`ed and reliant on `noindex` - a `Disallow` stops the crawler reading the `noindex`, so the URL is indexed from inbound links with no directive applied.

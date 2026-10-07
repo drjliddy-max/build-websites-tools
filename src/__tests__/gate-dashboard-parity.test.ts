@@ -15,12 +15,13 @@ import {
   aggregateGateResults,
 } from "../gate-dashboard-parity";
 
-test("requires exactly the four board-readiness surfaces (no silent drop)", () => {
+test("requires exactly the five board-readiness surfaces (no silent drop)", () => {
   const scripts = REQUIRED_READINESS_GATES.map((g) => g.script).sort();
   assert.deepEqual(scripts, [
     "gate-ada",
     "gate-ai-instrumentation-source",
     "gate-conversion-instrumentation-source",
+    "gate-indexability-source",
     "gate-seo",
   ]);
 });
