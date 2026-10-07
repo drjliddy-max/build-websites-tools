@@ -40,8 +40,8 @@ The eighth, `gate-blog-canonical`, is an **estate gate**. It is not a build gate
 | `gate-conversion-instrumentation-source` | leaf | `gate-dashboard-parity` |
 | `gate-ai-instrumentation` | leaf | - (runtime probe; needs a live server, so it is never composed) |
 | `gate-sitemap-source` | leaf | - |
-| `gate-indexability-source` | leaf | - (not yet composed; adoption is a separate operator decision) |
-| `gate-dashboard-parity` | **meta** | - (composes the four above) |
+| `gate-indexability-source` | leaf | `gate-dashboard-parity` (composed in v0.31.0) |
+| `gate-dashboard-parity` | **meta** | - (composes the five leaves above) |
 | `gate-blog-canonical` | **estate** | - (cross-repository; not part of any site build) |
 
 <!-- GATE-INVENTORY:END -->
@@ -70,13 +70,13 @@ What each one enforces:
 4. **`gate-ai-instrumentation-source`**: static (no running server needed) source check for the same AI Instrumentation Contract. Fails refactors that silently drop a surface before they ever launch a server. Catches the failure mode where a build passes locally because the dev server is up and breaks in CI because the route handler changed shape.
 5. **`gate-conversion-instrumentation-source`**: static check (no running server needed) that the site ships a consent-independent conversion-event relay so a found visitor's action can actually be measured. Enforces four invariants: exactly one `/api/track` route; the route forwards server-side via `GA4_API_SECRET` (not consent-gated client gtag); **single delivery** - client code calls the relay and no caller *also* fires a client `gtag("event", ...)` for the same click; and **session params** - the relay sends `session_id` and `engagement_time_msec`; and **delivery-safe payload** - the relay does NOT send `user_ip_address` or forward a `User-Agent` header, which cause GA4 to accept an event with a `204` and silently store nothing. Implements the Conversion Instrumentation Contract (MASTER_VISIBILITY_MATRIX §17.3.1.2, 2026-06-17), **corrected in v0.10.0** (see Migration below). Add it to a site's `gate:all` once that site has wired its conversion relay; which events a site emits is enforced downstream by Site Monitor, not here.
 6. **`gate-sitemap-source`** (v0.9.0): static check that the site's sitemap declares truthful `lastmod` dates. Prohibits `new Date()` with no argument, `Date.now()`, and one build-scoped date variable stamped onto every route. Explicitly allows reading stored content metadata (`new Date(post.published)`) and literal content dates. Companion to the runtime `lastmod` validation now in `gate-seo`: this one catches the construct, that one catches the served result.
-7. **`gate-indexability-source`** (v0.30.0): static check that every route the site actually ships is deliberately classified - present in `gate.config.json` `routes` (sitemapped, must stay indexable) or in `allowedOffSitemapRoutes` (must resolve to `noindex`). A route in neither fails, because that is the state in which a real page goes unsitemapped or an app page goes indexable without anyone deciding. Two further invariants: a declared-public route must not carry `noindex`, and a rendering route must not be both robots.txt-`Disallow`ed *and* reliant on `noindex` - the `Disallow` is what stops the crawler reading the `noindex`, so the URL ends up indexed from inbound links with no directive applied. Complement to `gate-seo`, which forbids `noindex` only on routes the site declares and therefore cannot fail on a page it never visits. **Not composed into `gate-dashboard-parity` or any `gate:all` in this release** - three consumers fail it today, so wiring it is a separate operator decision.
+7. **`gate-indexability-source`** (v0.30.0): static check that every route the site actually ships is deliberately classified - present in `gate.config.json` `routes` (sitemapped, must stay indexable) or in `allowedOffSitemapRoutes` (must resolve to `noindex`). A route in neither fails, because that is the state in which a real page goes unsitemapped or an app page goes indexable without anyone deciding. Two further invariants: a declared-public route must not carry `noindex`, and a rendering route must not be both robots.txt-`Disallow`ed *and* reliant on `noindex` - the `Disallow` is what stops the crawler reading the `noindex`, so the URL ends up indexed from inbound links with no directive applied. Complement to `gate-seo`, which forbids `noindex` only on routes the site declares and therefore cannot fail on a page it never visits. Composed into `gate-dashboard-parity` in v0.31.0, one release after it shipped: on the day it was written three consumers failed it, and it was wired only once the estate re-measured green 9/9 on current `origin/main`.
 
 Together: Google sees what it expects. Screen readers and assistive tech work. LLMs find the per-bot rules and the canonical baseline. Required pages (`/`, `/privacy`, `/terms`, `/accessibility`, `/contact`) cannot ship missing. The same gate set runs on every Site Clinic-built site.
 
 ## Dashboard-readiness meta-gate
 
-**`gate-dashboard-parity`** (v0.6.0) is a site-side meta-gate that *composes* four of the readiness gates above - it runs `gate:ada`, `gate:seo`, `gate:ai-instrumentation-source`, and `gate:conversion-instrumentation-source` and fails the build, naming the gap, if a marketing site is missing any surface a Site Clinic dashboard reads. The runtime probe `gate:ai-instrumentation` is deliberately **not** composed: it needs a live server, so consumers invoke it directly from `gate:all`. It does not duplicate their logic; it orchestrates them so a marketing site cannot ship sub-parity. This is the **site side** of board parity (MASTER_VISIBILITY_MATRIX §17.3.1.2); the **board side** is enforced by Site Monitor's `billableClientParity` contract test. Phase 3 Option A (site-side composition); the shared-manifest Option B is deferred. Details: [`docs/GATE_DASHBOARD_PARITY.md`](docs/GATE_DASHBOARD_PARITY.md).
+**`gate-dashboard-parity`** (v0.6.0) is a site-side meta-gate that *composes* five of the readiness gates above - it runs `gate:ada`, `gate:seo`, `gate:ai-instrumentation-source`, `gate:conversion-instrumentation-source` and `gate:indexability-source` and fails the build, naming the gap, if a marketing site is missing any surface a Site Clinic dashboard reads. The runtime probe `gate:ai-instrumentation` is deliberately **not** composed: it needs a live server, so consumers invoke it directly from `gate:all`. It does not duplicate their logic; it orchestrates them so a marketing site cannot ship sub-parity. This is the **site side** of board parity (MASTER_VISIBILITY_MATRIX §17.3.1.2); the **board side** is enforced by Site Monitor's `billableClientParity` contract test. Phase 3 Option A (site-side composition); the shared-manifest Option B is deferred. Details: [`docs/GATE_DASHBOARD_PARITY.md`](docs/GATE_DASHBOARD_PARITY.md).
 
 ## Used by
 
@@ -98,13 +98,13 @@ Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/b
      them fails the build. Version history elsewhere in this file is exempt. -->
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.30.0"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.31.0"
 ```
 
 ```jsonc
 // package.json
 "devDependencies": {
-  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.30.0"
+  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.31.0"
 }
 ```
 
@@ -114,9 +114,9 @@ npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.30.0"
 
 | You are | Pin | Why |
 |---|---|---|
-| A new consumer | `v0.30.0` | Release pin; confirm the tag exists before installation. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
-| An existing consumer on `v0.11.x` | `v0.30.0`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
-| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.30.0` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
+| A new consumer | `v0.31.0` | Release pin; confirm the tag exists before installation. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
+| An existing consumer on `v0.11.x` | `v0.31.0`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
+| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.31.0` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
 | A consumer with no `/api/track` relay | any | The GA4 contract does not apply to you. `bwt-sample-site` is deliberately on `v0.9.0` for this reason. |
 
 ### Release semantics: how a pin actually takes effect
@@ -169,7 +169,7 @@ The dependency pin is in [Install](#install) above. Register every gate you use 
 }
 ```
 
-**`gate:all` is three commands and runs seven gates.** `gate:dashboard-parity` spawns `gate:ada`, `gate:seo`, `gate:ai-instrumentation-source` and `gate:conversion-instrumentation-source`, so listing those four in `gate:all` as well would run each of them twice. They still need their own script entries, because the meta-gate invokes them by name. This is the shape every consumer in the portfolio uses.
+**`gate:all` is three commands and runs eight gates.** `gate:dashboard-parity` spawns `gate:ada`, `gate:seo`, `gate:ai-instrumentation-source`, `gate:conversion-instrumentation-source` and `gate:indexability-source`, so listing those five in `gate:all` as well would run each of them twice. They still need their own script entries, because the meta-gate invokes them by name. This is the shape every consumer in the portfolio uses.
 
 ### 2. `gate.config.json`
 

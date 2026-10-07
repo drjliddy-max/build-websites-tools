@@ -52,6 +52,24 @@ export const REQUIRED_READINESS_GATES: readonly RequiredGate[] = [
     script: "gate-conversion-instrumentation-source",
     label: "gate:conversion-instrumentation-source (/api/track relay)",
   },
+  /*
+   * Composed in v0.31.0, one release AFTER the gate itself shipped in
+   * v0.30.0. The delay was deliberate: on the day the gate was written three
+   * consumers failed it, and composing it immediately would have turned a
+   * useful new invariant into an estate-wide red build. It was composed only
+   * once the estate was re-measured green on current origin/main (9/9), which
+   * is the precondition to repeat for any future addition to this list.
+   *
+   * It complements gate-seo rather than duplicating it. gate-seo forbids
+   * noindex only on routes the site DECLARES, so a route that exists in the
+   * app directory and is declared nowhere is invisible to it: gate-seo cannot
+   * fail on a page it never visits. Six indexable app routes sat outside its
+   * view on daily-rise.com for months while gate-seo passed.
+   */
+  {
+    script: "gate-indexability-source",
+    label: "gate:indexability-source (route classification/noindex contract)",
+  },
 ];
 
 export interface GateResult {
