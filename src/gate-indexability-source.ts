@@ -21,18 +21,29 @@
  * the declared intent and the served HTML disagreed for months. gate:seo
  * passed the entire time, before AND after the repair.
  *
- * The same sweep found the mirror-image defect on
- * theparticipationeffect.com: /chapter-one is a real "Read Chapter One Free"
- * lead-capture page, HTTP 200 and `index, follow`, absent from the sitemap.
- * Indexable but unsitemapped is under-indexing; off-sitemap but indexable is
- * crawl waste. Both are the same missing invariant, in opposite directions.
+ * The same sweep flagged three further routes, and what they turned out to be
+ * is worth recording precisely, because the first report of them was wrong.
+ * theparticipationeffect.com /chapter-one, qirofit-web /blog and
+ * jeffrystein-web /the-belief-game are all real public pages that are
+ * correctly sitemapped and indexable in production. They were simply declared
+ * in neither list, so no gate ever visited them: gate:seo and gate:ada only
+ * inspect declared routes. /chapter-one was initially reported as "absent
+ * from the sitemap"; that was a MEASUREMENT ERROR. That sitemap emits
+ * www-prefixed URLs and the check grepped the non-www form, so it matched
+ * nothing. Re-verified host-agnostically, all three are in-sitemap.
+ *
+ * So this gate catches two distinct things, and the distinction matters when
+ * triaging a failure: a genuine indexing defect (daily-rise's six routes,
+ * served contradicting declared intent) and a COVERAGE gap (a real page with
+ * no gate coverage, where a future regression would ship silently). Both are
+ * the same missing invariant; only the second was found on those three sites.
  *
  * The contract, per static route the site ships:
  *
  *   1. CLASSIFIED: the route appears in gate.config.json's `routes` (public,
  *      sitemapped) or in `allowedOffSitemapRoutes` (deliberately excluded).
  *      A route in neither is unclassified: nobody has decided what it is,
- *      which is how /chapter-one went unsitemapped.
+ *      which is how /chapter-one ran with no gate coverage at all.
  *
  *   2. PUBLIC-ROUTES-INDEXABLE: a route in `routes` must NOT declare noindex.
  *      A sitemapped page carrying noindex is a page the site is advertising

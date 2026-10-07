@@ -10,7 +10,10 @@
  *                                 gate.config already listed them as
  *                                 off-sitemap. The defect the gate exists for.
  *   - theparticipationeffect:     /chapter-one, a real lead page, indexable
- *                                 and declared nowhere. The mirror defect.
+ *                                 and sitemapped, but declared nowhere, so no
+ *                                 gate ever visited it. A COVERAGE gap. It was
+ *                                 first reported as unsitemapped; that was a
+ *                                 measurement error (www vs non-www grep).
  *   - adaauditreport:             "/verify" declared in
  *                                 allowedOffSitemapRoutes with no bare page
  *                                 (only /verify/[leadId]). Flagging it was a
