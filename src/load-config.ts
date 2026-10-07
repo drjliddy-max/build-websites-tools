@@ -65,6 +65,25 @@ export interface GateConfig {
     allowMissingLastmodRoutes?: string[];
     dynamicListingRoutes?: string[];
   };
+  /*
+   * gate-indexability-source options (added v0.30.0).
+   *
+   * The gate asserts every static route the site ships is deliberately
+   * classified: either in `routes` (sitemapped, must stay indexable) or in
+   * `allowedOffSitemapRoutes` (must resolve to noindex). A route in neither
+   * is unclassified and fails, because that is the state in which a real
+   * page goes unsitemapped or an app page goes indexable without anyone
+   * deciding.
+   *
+   * allowUnclassified is the staged-migration path for a route whose
+   * classification is genuinely pending - it records the exemption in config
+   * instead of leaving the route silently unjudged.
+   */
+  indexability?: {
+    skip?: string;
+    checks?: Record<string, boolean>;
+    allowUnclassified?: string[];
+  };
 }
 
 const USAGE_HINT = `gate.config.json must exist at the consuming site's repo root with this shape:
