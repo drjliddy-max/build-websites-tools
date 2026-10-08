@@ -4,6 +4,16 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-07
+
+- `gates`: `gate-build-determinism-source` is now COMPOSED into `gate-dashboard-parity`'s `REQUIRED_READINESS_GATES`. It therefore runs on every production build of every consumer. `gate:all` is still three commands; it now runs nine gates, and the meta-gate spawns six leaves.
+- `why one release later`: v0.32.0 shipped the gate UNCOMPOSED because SIX of nine consumers failed it that day. Composing immediately would have reddened two thirds of the estate at once. The precondition was every exposed consumer migrated, deployed, and the estate re-measured green, and that is what happened: qirofit-web#40, participation-effect-site#43, jeffrystein-web#42, siteclinic-web#57, adaauditreport-web#47 and bmj-marketing#37 all merged, all six Production deployments confirmed `success` at their merge SHAs, and the gate then exited 0 on 9/9 consumers freshly synced to `origin/main`.
+- `verified by execution`: the local meta-gate run in qirofit-web's cwd spawns all six leaves and exits 0, with `gate:build-determinism-source PASS: 1/1` among them. Not inferred from the array.
+- `tests`: the `gate-dashboard-parity` no-silent-drop assertion now requires exactly six scripts, updated deliberately rather than relaxed.
+- `side effect worth recording`: bmj-marketing had carried a failed Production deployment since 2026-10-02 (its own issue #35). Its font-migration merge deployed successfully, clearing it. The original log was never read, so the font dependency is not claimed as that failure's cause, only that the repo carried the defect and now deploys.
+- Consumers adopt this only by advancing their pin and reinstalling. Releasing the tag does not change any site.
+
+
 ## [0.32.0] - 2026-10-07
 
 - `gates`: NEW `gate-build-determinism-source`. One invariant for now, `noRemoteFontFetch`: no source file may import `next/font/google`, which fetches font files from Google AT BUILD TIME in order to self-host them. `next/font/local` is the supported alternative and is explicitly fine.

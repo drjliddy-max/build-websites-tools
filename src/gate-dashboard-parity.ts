@@ -70,6 +70,25 @@ export const REQUIRED_READINESS_GATES: readonly RequiredGate[] = [
     script: "gate-indexability-source",
     label: "gate:indexability-source (route classification/noindex contract)",
   },
+  /*
+   * Composed in v0.33.0, one release after the gate shipped in v0.32.0, for
+   * the same reason as the entry above: on the day it was written SIX of nine
+   * consumers failed it, and composing immediately would have reddened two
+   * thirds of the estate at once. It was composed only after every exposed
+   * consumer was migrated to self-hosted fonts, deployed, and the estate
+   * re-measured 9/9 green on origin/main.
+   *
+   * It enforces that a production build does not depend on a third-party
+   * fetch succeeding. The defect it prevents cost two production build
+   * failures on 2026-10-07 and presented two different ways, neither of which
+   * named the font: once as a gate reporting a 500 from the dev server it
+   * probed, once as every gate passing and the real compile failing after
+   * them. Record: #51.
+   */
+  {
+    script: "gate-build-determinism-source",
+    label: "gate:build-determinism-source (no build-time third-party fetch)",
+  },
 ];
 
 export interface GateResult {
