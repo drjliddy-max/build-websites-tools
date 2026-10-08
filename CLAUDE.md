@@ -10,7 +10,7 @@ This is `build-websites-tools`, a build-time enforcement gate package consumed b
 
 ## When asked to modify this repo
 
-1. Read the README first. It states what the package is, what each gate enforces, and the schema for `gate.config.json`. Note the gate table: **`gate:all` is three commands and runs eight gates**, because `gate-dashboard-parity` is a meta-gate that spawns five leaves. Do not infer from a consuming site's `scripts` block that a gate is unwired.
+1. Read the README first. It states what the package is, what each gate enforces, and the schema for `gate.config.json`. Note the gate table: **`gate:all` is three commands and runs nine gates**, because `gate-dashboard-parity` is a meta-gate that spawns six leaves. Do not infer from a consuming site's `scripts` block that a gate is unwired.
 2. Read `AGENTS.md` for the standard onboarding flow.
 3. Read the source of the specific gate before modifying it. Gate sources are `src/gate-*.ts` (shared config loading: `src/load-config.ts`); the blog-writer estate gate is `bin/gate-blog-canonical.mjs` over `src/blog-writer/`. The `package.json` `bin` field is the authoritative gate list.
 4. Run the tests: `npm test`. The `test` script in `package.json` defines the set (currently `src/__tests__/` and `src/blog-writer/__tests__/`, Node test runner via tsx).
