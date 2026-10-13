@@ -115,7 +115,41 @@ export function createDefaultAdapter(site) {
  * `git`, `fs` and `runGate` are injected so the identical code path is driven by
  * tests and by production; there is no test-only branch inside it.
  */
-export function createRepoOwnedPublisher({ git, fs, runGate, adapter, now = () => new Date() }) {
+/**
+ * Read a commit's combined status from GitHub (C56). Injected in tests; in a workflow it uses the job's
+ * GITHUB_TOKEN, which needs `statuses: read`. Returns [{ context, state }].
+ */
+export function createGitHubStatusReader({ token = process.env.GITHUB_TOKEN, fetchImpl = globalThis.fetch } = {}) {
+  return async ({ owner, name, sha }) => {
+    const response = await fetchImpl(`https://api.github.com/repos/${owner}/${name}/commits/${sha}/status`, {
+      headers: { accept: "application/vnd.github+json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!response.ok) throw new Error(`status read failed: HTTP ${response.status}`);
+    const body = await response.json();
+    return (body.statuses ?? []).map((s) => ({ context: s.context, state: s.state }));
+  };
+}
+
+/** Every required context must be success; any failure or error ends the wait. Exact names only. */
+export function judgeRequiredStatuses(statuses, required) {
+  const latest = new Map();
+  for (const s of statuses) if (!latest.has(s.context)) latest.set(s.context, s.state);
+  const failed = required.filter((c) => latest.get(c) === "failure" || latest.get(c) === "error");
+  if (failed.length) return { verdict: "failed", failed };
+  const pending = required.filter((c) => latest.get(c) !== "success");
+  return pending.length ? { verdict: "pending", pending } : { verdict: "success" };
+}
+
+export function createRepoOwnedPublisher({
+  git,
+  fs,
+  runGate,
+  adapter,
+  now = () => new Date(),
+  statusReader = createGitHubStatusReader(),
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  previewPolicy = { budgetMs: 360_000, intervalMs: 15_000 },
+}) {
   if (!git || !fs) {
     throw new PublicationError("init", "createRepoOwnedPublisher requires git and fs.");
   }
@@ -294,13 +328,61 @@ export function createRepoOwnedPublisher({ git, fs, runGate, adapter, now = () =
         ]);
         const commitSha = (await git(["rev-parse", "HEAD"])).trim();
 
-        try {
-          await git(["push", "origin", branch]);
-        } catch (error) {
-          // The commit exists locally but the remote does not have it, so no
-          // deployment can follow. Reset it rather than report a publication.
-          await git(["reset", "--hard", "HEAD~1"]);
-          throw new PublicationError("push", `Push failed, local commit reverted: ${error.message}`);
+        const publishMode = site.publication?.publishMode ?? "direct";
+        let stagedVia = null;
+        if (publishMode === "staged") {
+          // C56. A protected default branch that requires a status check refuses a direct push (GH006), and a
+          // status can only exist after a push. So: push to a staging branch, wait for the required contexts
+          // on that exact SHA, then fast-forward the default branch to it. The SHA is unchanged, so the proof
+          // and live verification downstream see the same commit. Proven against classic protection with
+          // enforce_admins on (isolated repo, run 38404319076): direct push refused, fast-forward after
+          // success accepted, fast-forward after failure refused.
+          const required = site.publication?.requiredContexts ?? ["Vercel"];
+          stagedVia = `blog-writer/stage-${commitSha.slice(0, 12)}`;
+          const cleanup = async () => { try { await git(["push", "origin", "--delete", stagedVia]); } catch { /* best effort */ } };
+          try {
+            await git(["push", "origin", `HEAD:refs/heads/${stagedVia}`]);
+          } catch (error) {
+            await git(["reset", "--hard", "HEAD~1"]);
+            throw new PublicationError("stage", `Staging push failed, local commit reverted: ${error.message}`);
+          }
+          const started = now().getTime();
+          let judged = { verdict: "pending", pending: required };
+          for (;;) {
+            let statuses = [];
+            try {
+              statuses = await statusReader({ owner: site.repository.owner, name: site.repository.name, sha: commitSha });
+            } catch { statuses = []; }
+            judged = judgeRequiredStatuses(statuses, required);
+            if (judged.verdict !== "pending") break;
+            if (now().getTime() - started >= previewPolicy.budgetMs) break;
+            await sleep(previewPolicy.intervalMs);
+          }
+          if (judged.verdict !== "success") {
+            await cleanup();
+            await git(["reset", "--hard", "HEAD~1"]);
+            const why = judged.verdict === "failed"
+              ? `required status failed: ${judged.failed.join(", ")}`
+              : `required status not success within ${previewPolicy.budgetMs}ms: ${judged.pending.join(", ")}`;
+            throw new PublicationError("preview", `Staged publication not promoted, local commit reverted: ${why}`);
+          }
+          try {
+            await git(["push", "origin", `HEAD:${branch}`]);
+          } catch (error) {
+            await cleanup();
+            await git(["reset", "--hard", "HEAD~1"]);
+            throw new PublicationError("promote", `Fast-forward to ${branch} refused, local commit reverted: ${error.message}`);
+          }
+          await cleanup();
+        } else {
+          try {
+            await git(["push", "origin", branch]);
+          } catch (error) {
+            // The commit exists locally but the remote does not have it, so no
+            // deployment can follow. Reset it rather than report a publication.
+            await git(["reset", "--hard", "HEAD~1"]);
+            throw new PublicationError("push", `Push failed, local commit reverted: ${error.message}`);
+          }
         }
 
         return {
@@ -308,6 +390,8 @@ export function createRepoOwnedPublisher({ git, fs, runGate, adapter, now = () =
           slug: article.slug,
           commitSha,
           branch,
+          publishMode,
+          stagedVia,
           changedFiles: staged,
           draftPath,
           imagePath,
