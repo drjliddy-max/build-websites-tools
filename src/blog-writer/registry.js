@@ -26,6 +26,7 @@ const REQUIRED = [
 ];
 
 const ADAPTERS = new Set(["github-repo-commit"]);
+const PUBLISH_MODES = new Set(["direct", "staged"]);
 const IMAGE_PROVIDERS = new Set(["pexels", "repo-hosted"]);
 
 /**
@@ -123,6 +124,20 @@ export function validateRegistration(site) {
   requireString(site, "publication.workflowFile", site.publication?.workflowFile);
   requireString(site, "publication.schedulePath", site.publication?.schedulePath);
   requireString(site, "publication.draftDir", site.publication?.draftDir);
+  // C56 (2026-10-13). How the publication reaches the default branch. "direct" (the default, and the
+  // behaviour of every site before C56) pushes the commit straight to it. "staged" pushes to a temporary
+  // branch, waits for the required commit-status contexts on that exact SHA, then fast-forwards the default
+  // branch: the only way a GITHUB_TOKEN publisher can satisfy branch protection with a required status
+  // check (proven in an isolated protected repo, run 38404319076). Opt-in, so no other site changes.
+  const publishMode = site.publication.publishMode ?? "direct";
+  if (!PUBLISH_MODES.has(publishMode)) {
+    throw new RegistrationError(site.siteId, `publication.publishMode must be one of ${[...PUBLISH_MODES].join(", ")}`);
+  }
+  const contexts = site.publication.requiredContexts;
+  if (contexts !== undefined && (!Array.isArray(contexts) || contexts.length === 0
+    || contexts.some((c) => typeof c !== "string" || c.trim() === ""))) {
+    throw new RegistrationError(site.siteId, "publication.requiredContexts must be a non-empty array of non-empty strings");
+  }
 
   // Credentials are referenced BY NAME only. A registration that carried a
   // secret value would leak it into git the moment it was committed.

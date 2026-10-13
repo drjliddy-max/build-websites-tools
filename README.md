@@ -100,13 +100,13 @@ Two more run the same gates: [bwt-sample-site](https://github.com/drjliddy-max/b
      them fails the build. Version history elsewhere in this file is exempt. -->
 
 ```bash
-npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.33.0"
+npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.34.0"
 ```
 
 ```jsonc
 // package.json
 "devDependencies": {
-  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.33.0"
+  "build-websites-tools": "github:drjliddy-max/build-websites-tools#v0.34.0"
 }
 ```
 
@@ -116,9 +116,9 @@ npm install --save-dev "github:drjliddy-max/build-websites-tools#v0.33.0"
 
 | You are | Pin | Why |
 |---|---|---|
-| A new consumer | `v0.33.0` | Release pin; confirm the tag exists before installation. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
-| An existing consumer on `v0.11.x` | `v0.33.0`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
-| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.33.0` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
+| A new consumer | `v0.34.0` | Release pin; confirm the tag exists before installation. The fail-closed GA4 contract and the canonical blog writer are both included from the start, so there is nothing to migrate. |
+| An existing consumer on `v0.11.x` | `v0.34.0`, **after** reading the migration note below | v0.12.0 is **breaking for ambiguous GA4 configuration**. v0.13.0 adds the blog writer additively and changes no gate. |
+| An existing consumer on `< v0.11.3` | `v0.11.3` first, then `v0.34.0` | v0.10.x to v0.11.1 fixed three separate silent-delivery-loss defects. Land those before changing refusal behaviour, so a delivery problem and a config problem cannot be confused. |
 | A consumer with no `/api/track` relay | any | The GA4 contract does not apply to you. `bwt-sample-site` is deliberately on `v0.9.0` for this reason. |
 
 ### Release semantics: how a pin actually takes effect

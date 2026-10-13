@@ -4,6 +4,30 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-13
+
+- `blog-writer`: new opt-in `publication.publishMode: "staged"` (C56). The publication commit is pushed to a temporary `blog-writer/stage-<sha12>` branch. The publisher waits for every `publication.requiredContexts` status to be `success` on that exact SHA; the default required context is `["Vercel"]`. It then fast-forwards the default branch, and the staging branch is deleted.
+- `why`: participation-effect-site requires the `Vercel` status on a protected `main`. The direct-push publisher was refused with GH006 on 2026-10-11 (run 38099821039), because a status can only exist after a push. The staged path keeps protection intact and needs no PAT and no setting change.
+- `proven`: in an isolated repo with classic protection and enforce_admins on (run 38404319076), using GITHUB_TOKEN:
+  - a direct push was refused;
+  - the fast-forward after `Vercel=success` was accepted;
+  - the fast-forward after `Vercel=failure` was refused.
+- `fail-closed`: each case resets the local commit and deletes the staging branch.
+
+  | Case | Stage |
+  |---|---|
+  | Preview failure or error | `preview` |
+  | No `success` within the 360s budget (an unreadable status API counts as pending) | `preview` |
+  | Refused fast-forward | `promote` |
+  | Failed staging push | `stage` |
+
+- `unchanged`: `publishMode` defaults to `"direct"`, today's behaviour. No other site changes unless it opts in. The publication result now carries `publishMode` and `stagedVia`.
+- `consumer requirements to adopt staged`:
+  - the publish workflow needs `statuses: read`;
+  - `GITHUB_TOKEN` in the publish step's env;
+  - a step bound long enough for the preview build plus the existing live verification.
+- `tests`: `src/blog-writer/__tests__/staged-publish.test.mjs` has 10 cases. They cover call order, exact SHA, each fail-closed path, exact context matching, and registration validation. Full suite 607/607; typecheck clean.
+
 ## [0.33.0] - 2026-10-07
 
 - `gates`: `gate-build-determinism-source` is now COMPOSED into `gate-dashboard-parity`'s `REQUIRED_READINESS_GATES`. It therefore runs on every production build of every consumer. `gate:all` is still three commands; it now runs nine gates, and the meta-gate spawns six leaves.
