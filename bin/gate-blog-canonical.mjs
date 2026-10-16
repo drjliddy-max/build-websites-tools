@@ -40,7 +40,10 @@ const canonicalEntrypoint = readFileSync(
   "utf8",
 );
 
-const report = checkEstate({ manifest, readerFor, canonicalEntrypoint });
+// The gate always inspects each publish workflow (OBJ-d23f3769adcc PE-2): correlation with the
+// Site Monitor job record is a property of the workflow, which the byte-identical entrypoint
+// cannot vouch for.
+const report = checkEstate({ manifest, readerFor, canonicalEntrypoint, checkWorkflow: true });
 for (const result of report.results) {
   if (result.ok) {
     process.stdout.write(`  PASS  ${result.siteId}\n`);

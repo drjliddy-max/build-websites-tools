@@ -34,6 +34,65 @@ export const REQUIRED_SIGNATURES = [
   { code: "canonical-invocation", pattern: /runBlogWriterPipeline\s*\(/, why: "must invoke the canonical pipeline" },
 ];
 
+/** The dispatcher identity + slot every governed publish workflow must take and pass on. */
+export const DISPATCH_INPUTS = ["jobKey", "idempotencyKey", "correlationId", "targetDate"];
+
+/**
+ * Inspect a consumer's publish workflow (OBJ-d23f3769adcc PE-2).
+ *
+ * The entrypoint is byte-identical everywhere, but the workflow that calls it is per-repo, and
+ * that is where correlation with Site Monitor can silently break: an optional or unforwarded
+ * input yields a proof with `dispatch: null`, a renamed artifact is never found by the
+ * verifier, a dropped completion step lets a FAILED proof finish green, and a `schedule:`
+ * trigger starts runs that have no Site Monitor job record at all. Text checks, not a YAML
+ * parse: the package carries no YAML dependency, and every rule is a literal the governed
+ * workflows already contain (checked against all seven on 2026-10-16).
+ */
+export function checkPublishWorkflow(laneKey, yaml) {
+  const failures = [];
+  const text = yaml
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("#"))
+    .join("\n");
+
+  if (!/^\s*workflow_dispatch:/m.test(text)) {
+    failures.push({ code: "workflow-not-dispatched", message: "publish workflow must be triggered by workflow_dispatch from Site Monitor" });
+  }
+  if (/^\s*schedule:/m.test(text)) {
+    failures.push({ code: "workflow-self-scheduled", message: "a schedule: trigger starts runs with no Site Monitor job record; Site Monitor owns the schedule" });
+  }
+  for (const input of DISPATCH_INPUTS) {
+    const block = text.match(new RegExp(`^(\\s+)${input}:\\s*\\n((?:\\1\\s+.*\\n?)*)`, "m"));
+    if (!block) {
+      failures.push({ code: "workflow-input-missing", message: `workflow_dispatch input ${input} is not declared` });
+    } else if (!/required:\s*true/.test(block[2])) {
+      failures.push({ code: "workflow-input-optional", message: `workflow_dispatch input ${input} must be required: true` });
+    }
+  }
+  const call = text.match(new RegExp(`runWorkflow\\.mjs[\\s\\S]*?(?:\\n\\s*\\n|\\n\\s*exit_code=|$)`));
+  const invocation = text.includes(`.siteclinic/automation/${laneKey}/runWorkflow.mjs`) && call ? call[0] : "";
+  if (!invocation) {
+    failures.push({ code: "workflow-entrypoint-missing", message: `workflow does not run .siteclinic/automation/${laneKey}/runWorkflow.mjs` });
+  } else {
+    for (const flag of [...DISPATCH_INPUTS, "proofOutputPath"]) {
+      if (!new RegExp(`--${flag}\\s`).test(invocation)) {
+        failures.push({ code: "workflow-flag-missing", message: `runWorkflow.mjs is not passed --${flag}` });
+      }
+    }
+  }
+  if (!text.includes(`name: ${laneKey}-proof-\${{ github.run_id }}`)) {
+    failures.push({ code: "workflow-proof-artifact", message: `proof artifact must be uploaded as ${laneKey}-proof-\${{ github.run_id }} (Site Monitor discovers it by that name)` });
+  }
+  const enforces =
+    /proofVersion\s*!==\s*2/.test(text) &&
+    text.includes('"canonical-blog-writer"') &&
+    /state\s*!==\s*"COMPLETE"/.test(text);
+  if (!enforces) {
+    failures.push({ code: "workflow-completion-unenforced", message: "workflow must fail unless the proof is version 2, canonical-blog-writer, state COMPLETE" });
+  }
+  return failures;
+}
+
 /**
  * Check one participant.
  *
@@ -41,9 +100,20 @@ export const REQUIRED_SIGNATURES = [
  * (origin/main), not a working tree. A guard that trusts a local working tree
  * can be satisfied by uncommitted edits.
  */
-export function checkParticipant(participant, read, { approvedPins, canonicalEntrypoint = null }) {
+export function checkParticipant(participant, read, { approvedPins, canonicalEntrypoint = null, checkWorkflow = false }) {
   const failures = [];
   const laneDir = `.siteclinic/automation/${participant.laneKey}`;
+
+  // ── publish workflow (PE-2; opt-in so library callers keep prior behavior) ──
+  if (checkWorkflow) {
+    const workflowPath = `.github/workflows/${participant.laneKey}-publish.yml`;
+    const workflow = read(workflowPath);
+    if (!workflow) {
+      failures.push({ code: "missing-publish-workflow", message: `${workflowPath} is absent` });
+    } else {
+      failures.push(...checkPublishWorkflow(participant.laneKey, workflow));
+    }
+  }
 
   // ── pin ──────────────────────────────────────────────────────────────────
   const pkgRaw = read("package.json");
@@ -122,9 +192,9 @@ export function checkParticipant(participant, read, { approvedPins, canonicalEnt
 }
 
 /** Run the guard across every participant in the manifest. */
-export function checkEstate({ manifest, readerFor, canonicalEntrypoint = null }) {
+export function checkEstate({ manifest, readerFor, canonicalEntrypoint = null, checkWorkflow = false }) {
   const results = manifest.participants.map((participant) =>
-    checkParticipant(participant, readerFor(participant), { approvedPins: manifest.approvedPins, canonicalEntrypoint }),
+    checkParticipant(participant, readerFor(participant), { approvedPins: manifest.approvedPins, canonicalEntrypoint, checkWorkflow }),
   );
   const failed = results.filter((result) => !result.ok);
   return {

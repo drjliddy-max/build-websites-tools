@@ -167,6 +167,33 @@ export async function runBlogWriterPipeline({ siteId, occurrence, mode = "dry-ru
     }
     record("resolve-occurrence", true, { anchor, occurrence, contract: CADENCE_CONTRACT_ID });
 
+    // ── 3b. dispatch binding (OBJ-d23f3769adcc PE-1) ─────────────────────
+    //
+    // A dispatch identity that names another lane or another slot would let a run publish
+    // under Site Monitor's record for something else: buildProof accepts any well-formed
+    // triple, and Site Monitor matches the run by echoing that triple back. Bind it here,
+    // where the lane and the governed occurrence are both known. The dispatcher's
+    // idempotency key IS this lane-occurrence's key (site-monitor automationRegistry
+    // `blog-writer-<lane>:{{YYYY-MM-DD}}:1`), so equality is the whole check.
+    // A null dispatch is unchanged (dry-runs, library callers); whether a production run
+    // must carry one is enforced on the workflow by the estate guard.
+    if (dispatch !== null) {
+      const expectedKey = idempotencyKey({ laneKey: site.laneKey, occurrence });
+      if (dispatch.jobKey !== site.laneKey) {
+        throw new PipelineError(
+          "correlate-dispatch",
+          `dispatch jobKey ${JSON.stringify(dispatch.jobKey)} does not name this lane (${site.laneKey}).`,
+        );
+      }
+      if (dispatch.idempotencyKey !== expectedKey) {
+        throw new PipelineError(
+          "correlate-dispatch",
+          `dispatch idempotencyKey ${JSON.stringify(dispatch.idempotencyKey)} is not this occurrence's key (${expectedKey}); wrong lane or wrong slot.`,
+        );
+      }
+      record("correlate-dispatch", true, { jobKey: dispatch.jobKey, idempotencyKey: dispatch.idempotencyKey });
+    }
+
     // ── 4. inspect existing publication state (idempotency) ──────────────
     //
     // An already-published occurrence must still hand THIS dispatch a proof it

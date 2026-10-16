@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "build-websites-tools/contracts/publication-proof-v2.schema.json",
+  "title": "Canonical blog-writer publication proof, version 2",
+  "description": "Machine form of the proof written by src/blog-writer/proof.js buildProof (the code stays the authority; src/blog-writer/__tests__/publicationCorrelation.test.mjs fails if the two diverge). Consumed by each consumer's 'Enforce truthful completion' step and by Site Monitor's repo-owned GitHub publisher (proofMatchesDispatchIdentity). `dispatch` is the Site Monitor job identity; it is null only for runs Site Monitor did not dispatch (dry-runs, library callers). When present, its idempotencyKey equals the top-level idempotencyKey (the pipeline refuses otherwise). OBJ-d23f3769adcc PE-1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["proofVersion", "pipeline", "pipelineVersion", "laneKey", "siteId", "occurrence", "idempotencyKey", "dispatch", "state", "provenance", "article", "image", "publication", "verification", "failure", "startedAt", "completedAt"],
+  "properties": {
+    "proofVersion": { "const": 2 },
+    "pipeline": { "const": "canonical-blog-writer" },
+    "pipelineVersion": { "type": "string" },
+    "laneKey": { "type": "string" },
+    "siteId": { "type": "string" },
+    "occurrence": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "idempotencyKey": { "type": "string", "pattern": "^[a-z0-9-]+:\\d{4}-\\d{2}-\\d{2}:\\d+$" },
+    "dispatch": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["jobKey", "idempotencyKey", "correlationId"],
+      "properties": {
+        "jobKey": { "type": "string", "minLength": 1 },
+        "idempotencyKey": { "type": "string", "minLength": 1 },
+        "correlationId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "state": { "enum": ["NOT_STARTED", "READY", "GENERATED", "VALIDATED", "PUBLISHED", "VERIFIED", "COMPLETE", "FAILED"] },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "generatedBy", "generationProvider", "generationModel", "topicProvenance", "imageProvider", "note"],
+      "properties": {
+        "classification": { "enum": ["NEW_CANONICAL", "HISTORICAL_PRE_CANONICAL"] },
+        "generatedBy": { "type": ["string", "null"] },
+        "generationProvider": { "type": ["string", "null"] },
+        "generationModel": { "type": ["string", "null"] },
+        "topicProvenance": { "type": ["string", "object", "null"] },
+        "imageProvider": { "type": ["string", "null"] },
+        "note": { "type": ["string", "null"] }
+      }
+    },
+    "article": { "type": ["object", "null"] },
+    "image": { "type": ["object", "null"] },
+    "publication": { "type": ["object", "null"] },
+    "verification": { "type": ["object", "null"] },
+    "failure": {
+      "type": ["object", "null"],
+      "required": ["stage", "reason"],
+      "properties": {
+        "stage": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "startedAt": { "type": "string" },
+    "completedAt": { "type": ["string", "null"] }
+  }
+}
