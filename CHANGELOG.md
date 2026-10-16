@@ -4,6 +4,20 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+- `blog-writer` (OBJ-d23f3769adcc PE-1): a run that carries a Site Monitor dispatch identity must be addressed to this lane and this slot. `dispatch.jobKey` must equal the lane key, and `dispatch.idempotencyKey` must equal the occurrence's own key (`<laneKey>:<occurrence>:1`, the same template Site Monitor's registry uses). Otherwise the run fails at the new stage `correlate-dispatch`, before anything publishes, and the refused identity stays in the FAILED proof.
+  - A null dispatch is unchanged (dry-runs, library callers).
+  - `why`: Site Monitor finds a run by the triple echoed into its proof. A well-formed triple for another lane or slot would therefore verify that other job record.
+  - Consumers get this only by advancing their pin.
+- `contracts/publication-proof-v2.schema.json` (PE-1): the machine form of the proof v2 that `buildProof` writes. A test keeps the two from drifting.
+- `gate-blog-canonical` (PE-2): now also inspects each participant's publish workflow at origin/main. It requires:
+  - a `workflow_dispatch` trigger and no `schedule:`;
+  - the four inputs `jobKey`, `idempotencyKey`, `correlationId` and `targetDate`, each `required: true`;
+  - those flags plus `--proofOutputPath` forwarded to the lane's `runWorkflow.mjs`;
+  - the proof artifact named `<laneKey>-proof-${{ github.run_id }}`;
+  - the completion step enforcing version 2, `canonical-blog-writer` and `COMPLETE`.
+
+  All seven participants pass at their current origin/main (checked 2026-10-16). `checkParticipant` and `checkEstate` take the new `checkWorkflow` option and keep prior behavior without it.
+
 ## [0.34.0] - 2026-10-13
 
 - `blog-writer`: new opt-in `publication.publishMode: "staged"` (C56). The publication commit is pushed to a temporary `blog-writer/stage-<sha12>` branch. The publisher waits for every `publication.requiredContexts` status to be `success` on that exact SHA; the default required context is `["Vercel"]`. It then fast-forwards the default branch, and the staging branch is deleted.
