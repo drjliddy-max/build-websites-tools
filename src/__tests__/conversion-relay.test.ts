@@ -167,6 +167,19 @@ test("sanitizeParams drops non-conforming keys and non-primitive values", () => 
   assert.deepEqual(out, { ok: "yes", num: 1, bool: true });
 });
 
+test("sanitizeParams drops GA4 attribution-reserved names so they cannot create bogus traffic sources", () => {
+  assert.deepEqual(
+    sanitizeParams({ source: "health_scan_results", medium: "x", campaign: "c", term: "t", content: "k", gclid: "g", session_id: "9", engagement_time_msec: 1, cta_source: "health_scan_results", tier: "pro" }),
+    { cta_source: "health_scan_results", tier: "pro" },
+  );
+});
+
+test("a consumer-supplied source/session_id cannot reach the Measurement Protocol payload or override the relay's session", () => {
+  const p = buildMeasurementProtocolPayload({ name: "checkout_started", params: { source: "pricing", session_id: "evil" }, clientId: "1.2", sessionId: "1700000000" });
+  assert.equal(p.events[0].params.source, undefined);
+  assert.equal(p.events[0].params.session_id, "1700000000");
+});
+
 test("sanitizeParams truncates long strings to 500 chars", () => {
   const out = sanitizeParams({ long: "x".repeat(900) });
   assert.equal((out.long as string).length, 500);

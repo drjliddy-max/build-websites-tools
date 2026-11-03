@@ -166,6 +166,12 @@ export function resolveIdentity({
   };
 }
 
+/** Event-param names GA4 interprets as attribution/session control, not data. */
+export const RESERVED_ATTRIBUTION_PARAMS = new Set([
+  "source", "medium", "campaign", "term", "content", "campaign_id",
+  "gclid", "dclid", "srsltid", "session_id", "engagement_time_msec",
+]);
+
 /**
  * GA4 event params: keys must match [a-zA-Z][a-zA-Z0-9_]{0,39} and values must
  * be primitives. Anything else is dropped, which keeps accidental PII and
@@ -176,6 +182,11 @@ export function sanitizeParams(raw) {
   if (raw == null || typeof raw !== "object") return out;
   for (const [key, value] of Object.entries(raw)) {
     if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(key)) continue;
+    // GA4 reads these bare event-param names as traffic-source attribution, so a
+    // consumer's innocent `source: "pricing_cta"` surfaced as a bogus
+    // "pricing_cta / (not set)" source row (siteclinic.io, audit 2026-11-03).
+    // Dropped here, at the shared layer; consumers should name it e.g. `cta_source`.
+    if (RESERVED_ATTRIBUTION_PARAMS.has(key)) continue;
     if (typeof value === "string") out[key] = value.slice(0, 500);
     // NaN / Infinity / -Infinity are `typeof "number"` but JSON.stringify emits
     // them as `null`, so an unguarded numeric param silently reaches GA4 as a
