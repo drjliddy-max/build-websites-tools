@@ -205,6 +205,12 @@ export function sanitizeParams(raw) {
   return out;
 }
 
+/** Names present in `raw` that sanitizeParams will drop (disclosed, never silent). */
+export function droppedParams(raw) {
+  if (raw == null || typeof raw !== "object") return [];
+  return Object.keys(raw).filter((k) => RESERVED_ATTRIBUTION_PARAMS.has(k));
+}
+
 /** True when `name` is in the site's declared conversion allowlist. */
 export function isAllowedEvent(name, allowedEvents) {
   return Array.isArray(allowedEvents) && allowedEvents.includes(name);
@@ -616,7 +622,12 @@ export function createTrackHandler(options) {
       );
     }
 
-    const response = jsonResponse({ ok: true, event: name }, 200);
+    const dropped = droppedParams(raw.params);
+    const response = jsonResponse(
+      dropped.length > 0 ? { ok: true, event: name, droppedParams: dropped } : { ok: true, event: name },
+      200,
+    );
+    if (dropped.length > 0) response.headers.set("x-analytics-dropped-params", dropped.join(","));
     if (identity.mintedClientId) {
       response.headers.append(
         "set-cookie",

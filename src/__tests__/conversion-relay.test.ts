@@ -168,7 +168,7 @@ test("sanitizeParams drops non-conforming keys and non-primitive values", () => 
   assert.deepEqual(out, { ok: "yes", num: 1, bool: true });
 });
 
-test("sanitizeParams drops GA4 attribution-reserved names so they cannot create bogus traffic sources", () => {
+test("sanitizeParams drops GA4 attribution-attribution-conflict names so they cannot create bogus traffic sources", () => {
   assert.deepEqual(
     sanitizeParams({ source: "health_scan_results", medium: "x", campaign: "c", term: "t", content: "k", gclid: "g", session_id: "9", engagement_time_msec: 1, cta_source: "health_scan_results", tier: "pro" }),
     { cta_source: "health_scan_results", tier: "pro" },
