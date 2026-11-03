@@ -166,7 +166,13 @@ export function resolveIdentity({
   };
 }
 
-/** Event-param names GA4 interprets as attribution/session control, not data. */
+/**
+ * Defensive drop list (a portfolio policy, NOT Google's published reserved list). Google's
+ * Measurement Protocol reference reserves the prefixes google_, ga_, firebase_ and gtag. These
+ * bare names are dropped because they are attribution/session vocabulary in GA4 reporting, and a
+ * consumer-supplied value under them is never intended as data. Legitimate page context
+ * (page_location, page_referrer, page_title) is deliberately NOT on this list; a test pins that.
+ */
 export const RESERVED_ATTRIBUTION_PARAMS = new Set([
   "source", "medium", "campaign", "term", "content", "campaign_id",
   "gclid", "dclid", "srsltid", "session_id", "engagement_time_msec",
@@ -182,10 +188,9 @@ export function sanitizeParams(raw) {
   if (raw == null || typeof raw !== "object") return out;
   for (const [key, value] of Object.entries(raw)) {
     if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(key)) continue;
-    // GA4 reads these bare event-param names as traffic-source attribution, so a
-    // consumer's innocent `source: "pricing_cta"` surfaced as a bogus
-    // "pricing_cta / (not set)" source row (siteclinic.io, audit 2026-11-03).
-    // Dropped here, at the shared layer; consumers should name it e.g. `cta_source`.
+    // Defensive policy (see RESERVED_ATTRIBUTION_PARAMS). Observed context, causal link INFERRED:
+    // siteclinic.io showed a "pricing_cta / (not set)" source row while a consumer sent
+    // `source: "pricing_cta"` (audit 2026-11-03). Consumers should name it e.g. `cta_source`.
     if (RESERVED_ATTRIBUTION_PARAMS.has(key)) continue;
     if (typeof value === "string") out[key] = value.slice(0, 500);
     // NaN / Infinity / -Infinity are `typeof "number"` but JSON.stringify emits
