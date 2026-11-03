@@ -495,7 +495,7 @@ export function evaluateDeliverySafePayload(bodies: string[]): CheckResult {
 
 // ─── Attribution-conflict event params ──────────────────────────────
 
-const TRACK_CALL_WITH_PARAMS = /\b(?:trackEvent|track)\(\s*["'`][A-Za-z0-9_]+["'`]\s*,\s*\{([^}]*)\}/g;
+const TRACK_CALL_WITH_PARAMS = /(?<![.\w$])(?:trackEvent|track)\(\s*["'`][A-Za-z0-9_]+["'`]\s*,\s*\{([^}]*)\}/g;
 
 /**
  * Flag client event calls whose literal param object uses a name that conflicts

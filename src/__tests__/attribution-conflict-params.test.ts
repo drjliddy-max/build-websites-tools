@@ -63,3 +63,8 @@ test("relay response discloses dropped params instead of dropping silently", asy
     if (prevSecret === undefined) delete process.env.GA4_API_SECRET; else process.env.GA4_API_SECRET = prevSecret;
   }
 });
+
+test("gate ignores another library's member call (analytics.track) but still flags bare track()", () => {
+  assert.equal(evaluateAttributionConflictParams([{ rel: "d.tsx", body: `analytics.track("a", { source: "x" })` }]).pass, true);
+  assert.equal(evaluateAttributionConflictParams([{ rel: "e.tsx", body: `track("a", { source: "x" })` }]).pass, false);
+});
