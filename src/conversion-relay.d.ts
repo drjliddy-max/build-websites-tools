@@ -29,6 +29,8 @@ export declare function resolveIdentity(options: {
   generateSessionId?: () => string;
 }): ResolvedIdentity;
 
+export declare const RESERVED_ATTRIBUTION_PARAMS: ReadonlySet<string>;
+export declare function droppedParams(raw: unknown): string[];
 export declare function sanitizeParams(raw: unknown): Record<string, string | number | boolean>;
 
 /** Outcome of resolving the one effective measurement id from declared env keys. */

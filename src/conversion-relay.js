@@ -167,6 +167,18 @@ export function resolveIdentity({
 }
 
 /**
+ * Defensive drop list (a portfolio policy, NOT Google's published reserved list). Google's
+ * Measurement Protocol reference reserves the prefixes google_, ga_, firebase_ and gtag. These
+ * bare names are dropped because they are attribution/session vocabulary in GA4 reporting, and a
+ * consumer-supplied value under them is never intended as data. Legitimate page context
+ * (page_location, page_referrer, page_title) is deliberately NOT on this list; a test pins that.
+ */
+export const RESERVED_ATTRIBUTION_PARAMS = new Set([
+  "source", "medium", "campaign", "term", "content", "campaign_id",
+  "gclid", "dclid", "srsltid", "session_id", "engagement_time_msec",
+]);
+
+/**
  * GA4 event params: keys must match [a-zA-Z][a-zA-Z0-9_]{0,39} and values must
  * be primitives. Anything else is dropped, which keeps accidental PII and
  * oversized payloads out of the request.
@@ -176,6 +188,10 @@ export function sanitizeParams(raw) {
   if (raw == null || typeof raw !== "object") return out;
   for (const [key, value] of Object.entries(raw)) {
     if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(key)) continue;
+    // Defensive policy (see RESERVED_ATTRIBUTION_PARAMS). Observed context, causal link INFERRED:
+    // siteclinic.io showed a "pricing_cta / (not set)" source row while a consumer sent
+    // `source: "pricing_cta"` (audit 2026-11-03). Consumers should name it e.g. `cta_source`.
+    if (RESERVED_ATTRIBUTION_PARAMS.has(key)) continue;
     if (typeof value === "string") out[key] = value.slice(0, 500);
     // NaN / Infinity / -Infinity are `typeof "number"` but JSON.stringify emits
     // them as `null`, so an unguarded numeric param silently reaches GA4 as a
@@ -187,6 +203,12 @@ export function sanitizeParams(raw) {
     } else if (typeof value === "boolean") out[key] = value;
   }
   return out;
+}
+
+/** Names present in `raw` that sanitizeParams will drop (disclosed, never silent). */
+export function droppedParams(raw) {
+  if (raw == null || typeof raw !== "object") return [];
+  return Object.keys(raw).filter((k) => RESERVED_ATTRIBUTION_PARAMS.has(k));
 }
 
 /** True when `name` is in the site's declared conversion allowlist. */
@@ -600,7 +622,12 @@ export function createTrackHandler(options) {
       );
     }
 
-    const response = jsonResponse({ ok: true, event: name }, 200);
+    const dropped = droppedParams(raw.params);
+    const response = jsonResponse(
+      dropped.length > 0 ? { ok: true, event: name, droppedParams: dropped } : { ok: true, event: name },
+      200,
+    );
+    if (dropped.length > 0) response.headers.set("x-analytics-dropped-params", dropped.join(","));
     if (identity.mintedClientId) {
       response.headers.append(
         "set-cookie",
