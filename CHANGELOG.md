@@ -4,6 +4,12 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+- `gate-ada`: when Playwright's bundled Chromium is not installed, the gate now tries the machine's installed Google Chrome (`channel: "chrome"`) before it falls back to html-snapshot mode.
+  - `why`: found in the 2026-11-03 Alder & Stone acceptance build. On a developer Mac with Chrome but no `npx playwright install`, `gate:ada` reported `PASS [html-snapshot mode; color-contrast not evaluated]` with a working browser sitting right there.
+  - Hosts with neither browser, such as stock cloud build images, behave exactly as before, so `ada.requireBrowserMode` is unchanged.
+  - Local runs on machines that have Chrome can now evaluate color-contrast, and so can surface contrast findings the snapshot mode hid. That is the intended coverage.
+  - `launchChromiumWithFallback` is exported and unit-tested; three new tests in `src/__tests__/gate-ada.test.ts`.
+  - Consumers get this only by advancing their pin to a release that includes it.
 - `blog-writer` (OBJ-d23f3769adcc PE-1): a run that carries a Site Monitor dispatch identity must be addressed to this lane and this slot. `dispatch.jobKey` must equal the lane key, and `dispatch.idempotencyKey` must equal the occurrence's own key (`<laneKey>:<occurrence>:1`, the same template Site Monitor's registry uses). Otherwise the run fails at the new stage `correlate-dispatch`, before anything publishes, and the refused identity stays in the FAILED proof.
   - A null dispatch is unchanged (dry-runs, library callers).
   - `why`: Site Monitor finds a run by the triple echoed into its proof. A well-formed triple for another lane or slot would therefore verify that other job record.
