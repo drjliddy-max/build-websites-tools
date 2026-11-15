@@ -4,6 +4,10 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+- `conversion-relay`: new opt-in `persistFallbackId: false`. A visitor without `_ga` cookies (declined or undecided) gets a fresh client id on every request, no fallback cookie is set, and a fallback cookie set earlier is ignored and expired (`Max-Age=0`, `Path=/`). Clicks are still counted, one by one, but never linked across visits. Consented visitors are unaffected.
+  - `why`: owner decision 2026-11-15 for babymilestonejournal.com: a visitor who declines analytics must not carry a persistent identifier. The relay had been giving every non-consenting visitor a 2-year `<site>_cid` cookie, which contradicts a banner saying analytics load only after you accept.
+  - The default stays `true`, so no consumer changes until it opts in AND advances its pin. Six new tests in `src/__tests__/conversion-relay.test.ts`; five mutants of the new logic (reuse the old cookie, persist anyway, skip the expiry, flip the default, expire without `Path`) each fail them.
+
 - `gate-ada`: when Playwright's bundled Chromium is not installed, the gate now tries the machine's installed Google Chrome (`channel: "chrome"`) before it falls back to html-snapshot mode.
   - `why`: found in the 2026-11-03 Alder & Stone acceptance build. On a developer Mac with Chrome but no `npx playwright install`, `gate:ada` reported `PASS [html-snapshot mode; color-contrast not evaluated]` with a working browser sitting right there.
   - Hosts with neither browser, such as stock cloud build images, behave exactly as before, so `ada.requireBrowserMode` is unchanged.

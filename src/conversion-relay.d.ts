@@ -27,6 +27,8 @@ export declare function resolveIdentity(options: {
   fallbackCookieName: string;
   generateId: () => string;
   generateSessionId?: () => string;
+  /** Default true. False: ignore any existing fallback cookie and never mark one for persisting. */
+  persistFallbackId?: boolean;
 }): ResolvedIdentity;
 
 export declare function sanitizeParams(raw: unknown): Record<string, string | number | boolean>;
@@ -132,6 +134,13 @@ export declare function createTrackHandler(options: {
   /** Forward the visitor's User-Agent header. Default FALSE, same reason. */
   forwardUserAgent?: boolean;
   cookieMaxAgeSeconds?: number;
+  /**
+   * Default TRUE (unchanged behaviour). FALSE: a non-consenting visitor gets a
+   * fresh client id on every request, no fallback cookie is set, and an
+   * existing fallback cookie is ignored and expired (Max-Age=0). Clicks are
+   * counted individually and never linked across visits.
+   */
+  persistFallbackId?: boolean;
   engagementTimeMsec?: number;
   fetchImpl?: typeof fetch;
   getEnv?: () => Record<string, string | undefined>;
