@@ -179,3 +179,30 @@ test("BLOG_WRITER_LOCAL_MODEL_ENDPOINT moves the local endpoint (container runne
     "http://127.0.0.1:11434/api/generate",
   ]);
 });
+
+test("the local endpoint must be local: loopback, the container host gateway, or a private range, over http", async () => {
+  const { isLocalModelEndpoint, LOCAL_ENDPOINT_NOT_LOCAL } = await import("../generator.js");
+  for (const ok of ["http://127.0.0.1:11434", "http://127.0.0.9:1", "http://localhost:11434", "http://[::1]:11434",
+    "http://host.docker.internal:11435", "http://host.lima.internal:11435", "http://192.168.5.2:11435",
+    "http://10.1.2.3:11434", "http://172.20.0.1:11434"]) {
+    assert.equal(isLocalModelEndpoint(ok), true, ok);
+  }
+  for (const bad of ["https://api.example.com", "http://api.example.com:11434", "http://8.8.8.8:11434",
+    "http://172.32.0.1:11434", "http://192.169.0.1:11434", "https://127.0.0.1:11434", "ftp://127.0.0.1",
+    "http://127.0.0.1.example.com", "http://host.docker.internal.evil.com", "not a url", ""]) {
+    assert.equal(isLocalModelEndpoint(bad), false, bad);
+  }
+  const seen = [];
+  process.env.BLOG_WRITER_LOCAL_MODEL_ENDPOINT = "https://models.example.com";
+  try {
+    const p = createLocalProvider({ model: "qwen3:14b", fetchImpl: async (u) => { seen.push(u); return { ok: true, json: async () => ({}) }; } });
+    await assert.rejects(p.complete("p"), (error) => {
+      assert.equal(error.detail?.code, LOCAL_ENDPOINT_NOT_LOCAL);
+      assert.ok(!error.message.includes("models.example.com"), "the configured host is not echoed");
+      return true;
+    });
+  } finally {
+    delete process.env.BLOG_WRITER_LOCAL_MODEL_ENDPOINT;
+  }
+  assert.deepEqual(seen, [], "nothing is sent to a non-local endpoint");
+});

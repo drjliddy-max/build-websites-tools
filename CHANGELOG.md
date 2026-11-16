@@ -7,8 +7,9 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 - `blog-writer`: provider failures now name their cause. A hosted response that says the account has no usable credit (HTTP 402 `billing_error`, or HTTP 400 whose message says the credit balance is too low) fails with `PROVIDER_UNFUNDED`: one call, no repair retries, route outcome `hosted:unfunded`, and the run's failure reason starts with `PROVIDER_UNFUNDED:`. A local model server that does not answer (for example a GitHub-hosted runner with no Ollama) is `local:unreachable` with code `LOCAL_MODEL_UNREACHABLE`; a timeout abort is not reclassified.
   - `why`: owner decision 2026-11-16: no additional Anthropic credit, no auto-reload, no replacement usage-billed API. When the existing credit runs out the hosted channel must stop safely and say so. Before this, an exhausted balance read "Hosted model returned 400." inside "local:rejected ×3 -> hosted:rejected", indistinguishable from a bad request or a validation failure.
   - The provider's error text is read only to classify and is never surfaced (it can echo the request). A non-billing 400, or an unparseable body, keeps the old status-only message.
-  - Nine tests in `src/blog-writer/__tests__/providerUnfunded.test.mjs`; five mutants of the new logic each fail them.
+  - Ten tests in `src/blog-writer/__tests__/providerUnfunded.test.mjs`; five mutants of the new logic each fail them.
   - New: `BLOG_WRITER_LOCAL_MODEL_ENDPOINT` moves the local model endpoint (default `http://127.0.0.1:11434`; an explicit `endpoint` argument still wins). A job running in a container on the Mac reaches the host Ollama at `http://host.docker.internal:11434`, which was measured working on 2026-11-16.
+  - The local endpoint must be plain http to loopback, `host.docker.internal`, `host.lima.internal` or an RFC 1918 address; anything else fails with `LOCAL_ENDPOINT_NOT_LOCAL` before a byte is sent, and the host is not echoed. Keeps the route's "local" and the zero-spend claims true (lane 64 review, LOW).
   - Consumers get this only by advancing their pin.
 
 ## [0.35.0] - 2026-11-15

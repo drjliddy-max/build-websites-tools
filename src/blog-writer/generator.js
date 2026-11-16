@@ -318,6 +318,26 @@ export function parseModelJson(raw) {
  * instead of each consumer entrypoint growing its own endpoint logic.
  */
 export const LOCAL_MODEL_ENDPOINT_ENV = "BLOG_WRITER_LOCAL_MODEL_ENDPOINT";
+export const LOCAL_ENDPOINT_NOT_LOCAL = "LOCAL_ENDPOINT_NOT_LOCAL";
+
+/**
+ * The route calls this provider "local", and the zero-spend claim depends on it. So the endpoint
+ * must be plain http to loopback, the container host gateway names, or an RFC 1918 address. A
+ * remote URL here would send site content to someone else's model while the proof still said
+ * "local" (lane 64 review of PR #64, LOW).
+ */
+export function isLocalModelEndpoint(value) {
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  if (url.protocol !== "http:") return false;
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (["localhost", "::1", "host.docker.internal", "host.lima.internal"].includes(host)) return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  if (m.slice(1).some((o) => Number(o) > 255)) return false;
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
 function defaultLocalEndpoint() {
   return process.env[LOCAL_MODEL_ENDPOINT_ENV]?.trim() || "http://127.0.0.1:11434";
 }
@@ -327,6 +347,13 @@ export function createLocalProvider({ model = "phi4:14b", endpoint = defaultLoca
     id: "local",
     model,
     async complete(prompt, { timeoutMs = 600_000, schema = ARTICLE_RESPONSE_SCHEMA } = {}) {
+      if (!isLocalModelEndpoint(endpoint)) {
+        // Refused before any byte is sent; the host is not echoed into the proof.
+        throw new GenerationError(
+          `${LOCAL_ENDPOINT_NOT_LOCAL}: the local model endpoint is not a loopback, host-gateway or private http address.`,
+          { code: LOCAL_ENDPOINT_NOT_LOCAL },
+        );
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
