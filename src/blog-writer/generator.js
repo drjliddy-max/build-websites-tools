@@ -105,6 +105,33 @@ export class GenerationError extends Error {
 }
 
 /**
+ * Outcome codes a provider can attach to a GenerationError's `detail.code`.
+ *
+ * PROVIDER_UNFUNDED: the hosted provider answered that the account has no usable
+ * credit. Owner decision 2026-11-16: no additional API credit and no auto-reload,
+ * so this is a terminal, non-retryable state for the run, not a transient error.
+ * LOCAL_MODEL_UNREACHABLE: no model server answered at the local endpoint (for
+ * example a GitHub-hosted runner, which has no Ollama). Distinct from a model
+ * that answered with a rejected draft.
+ */
+export const PROVIDER_UNFUNDED = "PROVIDER_UNFUNDED";
+export const LOCAL_MODEL_UNREACHABLE = "LOCAL_MODEL_UNREACHABLE";
+
+/**
+ * Classify a non-2xx hosted response as a funding failure. Reads only the error
+ * TYPE and tests the message against a fixed pattern; the message itself is never
+ * returned, logged or stored, because a provider error body can echo the request.
+ * Anthropic documents 402 `billing_error`; an exhausted prepaid balance has also
+ * been returned as 400 `invalid_request_error` "Your credit balance is too low".
+ */
+export function isUnfundedResponse(status, body) {
+  const type = body?.error?.type;
+  const message = typeof body?.error?.message === "string" ? body.error.message : "";
+  if (status === 402 || type === "billing_error") return true;
+  return status === 400 && /credit balance is too low/i.test(message);
+}
+
+/**
  * Build the instruction from the site's registered context. Nothing here is
  * site-coded: every site-specific value arrives through `site`.
  */
@@ -284,15 +311,55 @@ export function parseModelJson(raw) {
  * Ollama provider. The local lane. Requires no hosted credential, which is why
  * the generator is provable on this machine today.
  */
-export function createLocalProvider({ model = "phi4:14b", endpoint = "http://127.0.0.1:11434", fetchImpl = fetch } = {}) {
+/**
+ * Where the local model server lives. Defaults to this machine's Ollama. A
+ * containerized runner cannot reach the host's loopback as 127.0.0.1, so it
+ * names the host gateway here (for example http://host.docker.internal:11434)
+ * instead of each consumer entrypoint growing its own endpoint logic.
+ */
+export const LOCAL_MODEL_ENDPOINT_ENV = "BLOG_WRITER_LOCAL_MODEL_ENDPOINT";
+export const LOCAL_ENDPOINT_NOT_LOCAL = "LOCAL_ENDPOINT_NOT_LOCAL";
+
+/**
+ * The route calls this provider "local", and the zero-spend claim depends on it. So the endpoint
+ * must be plain http to loopback, the container host gateway names, or an RFC 1918 address. A
+ * remote URL here would send site content to someone else's model while the proof still said
+ * "local" (lane 64 review of PR #64, LOW).
+ */
+export function isLocalModelEndpoint(value) {
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  if (url.protocol !== "http:") return false;
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (["localhost", "::1", "host.docker.internal", "host.lima.internal"].includes(host)) return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  if (m.slice(1).some((o) => Number(o) > 255)) return false;
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+function defaultLocalEndpoint() {
+  return process.env[LOCAL_MODEL_ENDPOINT_ENV]?.trim() || "http://127.0.0.1:11434";
+}
+
+export function createLocalProvider({ model = "phi4:14b", endpoint = defaultLocalEndpoint(), fetchImpl = fetch } = {}) {
   return {
     id: "local",
     model,
     async complete(prompt, { timeoutMs = 600_000, schema = ARTICLE_RESPONSE_SCHEMA } = {}) {
+      if (!isLocalModelEndpoint(endpoint)) {
+        // Refused before any byte is sent; the host is not echoed into the proof.
+        throw new GenerationError(
+          `${LOCAL_ENDPOINT_NOT_LOCAL}: the local model endpoint is not a loopback, host-gateway or private http address.`,
+          { code: LOCAL_ENDPOINT_NOT_LOCAL },
+        );
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await fetchImpl(`${endpoint}/api/generate`, {
+        let response;
+        try {
+          response = await fetchImpl(`${endpoint}/api/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -310,7 +377,15 @@ export function createLocalProvider({ model = "phi4:14b", endpoint = "http://127
             options: { temperature: 0.7, num_predict: 4096 },
           }),
           signal: controller.signal,
-        });
+          });
+        } catch (error) {
+          // A timeout abort is a slow model, not a missing one; keep it as-is.
+          if (error?.name === "AbortError") throw error;
+          throw new GenerationError(
+            `${LOCAL_MODEL_UNREACHABLE}: no local model server answered at ${endpoint}.`,
+            { code: LOCAL_MODEL_UNREACHABLE },
+          );
+        }
         if (!response.ok) {
           throw new GenerationError(`Local model returned ${response.status}.`);
         }
@@ -376,7 +451,17 @@ export function createHostedProvider({ model, endpoint, apiKeyEnv, fetchImpl = f
           signal: controller.signal,
         });
         if (!response.ok) {
-          // Status only. A provider error body can echo the request.
+          // Status only. A provider error body can echo the request, so the body
+          // is read for classification and then discarded, never surfaced.
+          let errorBody = null;
+          try { errorBody = await response.json(); } catch { errorBody = null; }
+          if (isUnfundedResponse(response.status, errorBody)) {
+            throw new GenerationError(
+              `${PROVIDER_UNFUNDED}: hosted provider ${model} has no usable credit (HTTP ${response.status}). ` +
+                "No additional AI spend is authorized; nothing was generated and the run stops here.",
+              { code: PROVIDER_UNFUNDED, status: response.status },
+            );
+          }
           throw new GenerationError(`Hosted model returned ${response.status}.`);
         }
         const payload = await response.json();
@@ -447,19 +532,27 @@ export async function generateWithProviderRouting({ providers, ...args }) {
       };
     } catch (error) {
       lastError = error;
+      const code = error?.detail?.code;
       route.push({
         providerId: provider.id,
         model: provider.model,
-        outcome: "rejected",
+        outcome: code === PROVIDER_UNFUNDED ? "unfunded"
+          : code === LOCAL_MODEL_UNREACHABLE ? "unreachable"
+          : "rejected",
         reason: error.message,
       });
     }
   }
 
-  throw new GenerationError(
+  const summary =
     `All ${providers.length} provider(s) failed to produce a valid article. ` +
-      `Route: ${route.map((r) => `${r.providerId}:${r.outcome}`).join(" -> ")}`,
-    { route, lastError: lastError?.message ?? null },
+    `Route: ${route.map((r) => `${r.providerId}:${r.outcome}`).join(" -> ")}`;
+  // The last resort was unfunded: say so first, so the proof's failure reason and
+  // the workflow summary name the cause instead of a generic provider failure.
+  const unfunded = route.length > 0 && route[route.length - 1].outcome === "unfunded";
+  throw new GenerationError(
+    unfunded ? `${PROVIDER_UNFUNDED}: ${summary}` : summary,
+    { route, lastError: lastError?.message ?? null, ...(unfunded ? { code: PROVIDER_UNFUNDED } : {}) },
   );
 }
 
