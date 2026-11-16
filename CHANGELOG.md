@@ -4,6 +4,8 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-11-16
+
 - `blog-writer`: provider failures now name their cause. A hosted response that says the account has no usable credit (HTTP 402 `billing_error`, or HTTP 400 whose message says the credit balance is too low) fails with `PROVIDER_UNFUNDED`: one call, no repair retries, route outcome `hosted:unfunded`, and the run's failure reason starts with `PROVIDER_UNFUNDED:`. A local model server that does not answer (for example a GitHub-hosted runner with no Ollama) is `local:unreachable` with code `LOCAL_MODEL_UNREACHABLE`; a timeout abort is not reclassified.
   - `why`: owner decision 2026-11-16: no additional Anthropic credit, no auto-reload, no replacement usage-billed API. When the existing credit runs out the hosted channel must stop safely and say so. Before this, an exhausted balance read "Hosted model returned 400." inside "local:rejected ×3 -> hosted:rejected", indistinguishable from a bad request or a validation failure.
   - The provider's error text is read only to classify and is never surfaced (it can echo the request). A non-billing 400, or an unparseable body, keeps the old status-only message.
