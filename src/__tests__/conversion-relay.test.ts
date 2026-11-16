@@ -275,6 +275,118 @@ test("handler persists the minted id and withholds the IP for a non-consenting v
   assert.match(cookie, /SameSite=Lax/);
 });
 
+// ─── persistFallbackId: false (no persistent id without consent) ──────
+// Owner decision 2026-11-15 for babymilestonejournal.com: a visitor who
+// declines analytics must not carry a persistent identifier. The default stays
+// true so no other consumer changes.
+
+test("resolveIdentity with persistFallbackId:false ignores an existing fallback cookie", () => {
+  const identity = resolveIdentity({
+    cookieHeader: "bmj_cid=STABLE",
+    measurementId: "G-E9VHN7LTXB",
+    fallbackCookieName: "bmj_cid",
+    generateId: () => "FRESH",
+    persistFallbackId: false,
+  });
+  assert.equal(identity.clientId, "FRESH", "reusing the old cookie would link visits");
+  assert.equal(identity.consented, false);
+  assert.equal(identity.mintedClientId, false, "nothing may be marked for persisting");
+});
+
+test("resolveIdentity with persistFallbackId:false still uses the _ga identity when consented", () => {
+  const identity = resolveIdentity({
+    cookieHeader: "_ga=GA1.1.111.222; bmj_cid=STABLE",
+    measurementId: "G-E9VHN7LTXB",
+    fallbackCookieName: "bmj_cid",
+    generateId: () => "FRESH",
+    persistFallbackId: false,
+  });
+  assert.equal(identity.clientId, "111.222");
+  assert.equal(identity.consented, true);
+});
+
+test("handler with persistFallbackId:false sets no cookie and uses a fresh id per click", async () => {
+  const { calls, impl } = recordingFetch();
+  let n = 0;
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl,
+    fallbackCookieName: "bmj_cid", persistFallbackId: false,
+    generateId: () => `ID${++n}.1`,
+  });
+  const a = await handler(makeRequest({ name: "buy" }));
+  const b = await handler(makeRequest({ name: "buy" }));
+  assert.equal(a.status, 200);
+  assert.equal(b.status, 200);
+  assert.equal(a.headers.get("set-cookie"), null, "no identifier may be stored");
+  assert.equal(b.headers.get("set-cookie"), null);
+  assert.notEqual(calls[0].body.client_id, calls[1].body.client_id, "clicks must not be linked");
+  assert.deepEqual(calls[0].body.consent, { ad_user_data: "DENIED", ad_personalization: "DENIED" });
+});
+
+test("handler with persistFallbackId:false expires a fallback cookie set before the opt-in", async () => {
+  const { calls, impl } = recordingFetch();
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl,
+    fallbackCookieName: "bmj_cid", persistFallbackId: false, generateId: () => "FRESH.1",
+  });
+  const res = await handler(makeRequest({ name: "buy" }, { cookie: "bmj_cid=OLD.123" }));
+  assert.equal(res.status, 200);
+  assert.equal(calls[0].body.client_id, "FRESH.1", "the old id must not be sent");
+  // Exact string: Path must be "/" and there must be no Domain, matching the
+  // host-only Path=/ cookie the relay set. Any other Path or a Domain names a
+  // different cookie, and the browser keeps the old one (review LOW-1).
+  assert.equal(
+    res.headers.get("set-cookie"),
+    "bmj_cid=; Path=/; Max-Age=0; Secure; SameSite=Lax",
+  );
+});
+
+test("handler with persistFallbackId:false expires the legacy cookie on a rejected request too", async () => {
+  // Review LOW-2: a 400 (unknown event) must still clear the cookie.
+  const { calls, impl } = recordingFetch();
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl,
+    fallbackCookieName: "bmj_cid", persistFallbackId: false,
+  });
+  const res = await handler(makeRequest({ name: "not_allowed" }, { cookie: "bmj_cid=OLD.123" }));
+  assert.equal(res.status, 400);
+  assert.equal(calls.length, 0);
+  assert.equal(res.headers.get("set-cookie"), "bmj_cid=; Path=/; Max-Age=0; Secure; SameSite=Lax");
+});
+
+test("handler with persistFallbackId:false expires the legacy cookie when GA4 rejects the event", async () => {
+  const { impl } = recordingFetch(400);
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl,
+    fallbackCookieName: "bmj_cid", persistFallbackId: false,
+  });
+  const res = await handler(makeRequest({ name: "buy" }, { cookie: "bmj_cid=OLD.123" }));
+  assert.equal(res.status, 502);
+  assert.equal(res.headers.get("set-cookie"), "bmj_cid=; Path=/; Max-Age=0; Secure; SameSite=Lax");
+});
+
+test("handler with persistFallbackId:false expires the legacy cookie for a consented visitor too", async () => {
+  const { calls, impl } = recordingFetch();
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl,
+    fallbackCookieName: "bmj_cid", persistFallbackId: false,
+  });
+  const res = await handler(makeRequest({ name: "buy" }, { cookie: "_ga=GA1.1.111.222; bmj_cid=OLD.123" }));
+  assert.equal(calls[0].body.client_id, "111.222");
+  assert.match(res.headers.get("set-cookie") ?? "", /^bmj_cid=; .*Max-Age=0/);
+});
+
+test("default (persistFallbackId omitted) still persists and reuses the fallback id", async () => {
+  // Guards the other consumers: the opt-in must not change the default.
+  const { calls, impl } = recordingFetch();
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl, fallbackCookieName: "x_cid",
+  });
+  const res = await handler(makeRequest({ name: "buy" }, { cookie: "x_cid=KEEP.1" }));
+  assert.equal(calls[0].body.client_id, "KEEP.1");
+  assert.equal(res.headers.get("set-cookie"), null, "an existing id is reused, not re-set or expired");
+});
+
 test("handler surfaces a non-204 upstream as 502 instead of reporting success", async () => {
   // 204 is the ONLY success signal from the Measurement Protocol; anything
   // else must not read as a delivered conversion.

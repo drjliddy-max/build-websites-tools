@@ -125,6 +125,13 @@ export function readGaSessionId(cookieHeader, measurementId) {
  * event joins the session GA4 already has. Non-consenting visitors get a
  * stable first-party id and a minted session id. `consented` reflects which
  * happened and drives the consent block on the payload.
+ *
+ * `persistFallbackId: false` (opt-in, default true) gives a non-consenting
+ * visitor a FRESH id on every request: an existing fallback cookie is ignored
+ * and nothing is marked for persisting, so clicks are counted individually and
+ * never linked across visits. Owner decision for babymilestonejournal.com,
+ * 2026-11-15: a visitor who declines analytics must not carry a persistent
+ * identifier. Consented visitors are unaffected (they use the _ga identity).
  */
 export function resolveIdentity({
   cookieHeader,
@@ -132,6 +139,7 @@ export function resolveIdentity({
   fallbackCookieName,
   generateId,
   generateSessionId,
+  persistFallbackId = true,
 }) {
   if (typeof generateId !== "function") {
     throw new Error("resolveIdentity: generateId is required");
@@ -152,7 +160,9 @@ export function resolveIdentity({
       mintedClientId: false,
     };
   }
-  const existing = parseCookies(cookieHeader)[fallbackCookieName];
+  const existing = persistFallbackId
+    ? parseCookies(cookieHeader)[fallbackCookieName]
+    : undefined;
   const clientId = existing || generateId();
   return {
     clientId,
@@ -162,7 +172,7 @@ export function resolveIdentity({
     // generator note in createTrackHandler.
     sessionId: mintSession(),
     consented: false,
-    mintedClientId: !existing,
+    mintedClientId: persistFallbackId && !existing,
   };
 }
 
@@ -437,6 +447,9 @@ export function createTrackHandler(options) {
   }
   const fallbackCookieName = opts.fallbackCookieName || "bwt_cid";
   const cookieMaxAgeSeconds = opts.cookieMaxAgeSeconds ?? 63072000; // 2 years
+  // Opt-in: no persistent identifier for non-consenting visitors (see
+  // resolveIdentity). Default true keeps every existing consumer unchanged.
+  const persistFallbackId = opts.persistFallbackId !== false;
   const fetchImpl = opts.fetchImpl || ((...args) => fetch(...args));
   const getEnv = opts.getEnv || (() => process.env);
   // GA4 wants two DIFFERENT shapes, and conflating them silently broke the
@@ -466,7 +479,7 @@ export function createTrackHandler(options) {
       ? opts.measurementIdEnvKeys
       : ["GA4_MEASUREMENT_ID", "NEXT_PUBLIC_GA_MEASUREMENT_ID"];
 
-  return async function handleTrackPost(request) {
+  const handleTrackPost = async function handleTrackPost(request) {
     const env = getEnv();
     // TRIM. A deploy platform's env editor happily stores a trailing newline,
     // and every UI renders "G-XXXX\n" identically to "G-XXXX". Untrimmed, that
@@ -551,6 +564,7 @@ export function createTrackHandler(options) {
       fallbackCookieName,
       generateId: generateClientId,
       generateSessionId,
+      persistFallbackId,
     });
 
     const payload = buildMeasurementProtocolPayload({
@@ -632,6 +646,27 @@ export function createTrackHandler(options) {
       response.headers.append(
         "set-cookie",
         `${fallbackCookieName}=${encodeURIComponent(identity.clientId)}; Path=/; Max-Age=${cookieMaxAgeSeconds}; Secure; SameSite=Lax`,
+      );
+    }
+    return response;
+  };
+
+  if (persistFallbackId) return handleTrackPost;
+
+  // persistFallbackId: false must also END persistence for visitors who were
+  // given the cookie before the site opted in. Ignoring it is not enough: it
+  // would stay in the browser for up to two years. Expire it whenever it is
+  // sent, consented or not (a consented visitor never needs it either), and on
+  // EVERY response, including 400/405/503/502, so a request that fails still
+  // clears it. Path=/ and no Domain match how the cookie was set (host-only),
+  // which is what makes the browser delete that cookie rather than a sibling.
+  return async function handleTrackPostWithoutPersistentId(request) {
+    const response = await handleTrackPost(request);
+    const sent = parseCookies(request.headers.get("cookie") || "")[fallbackCookieName];
+    if (sent !== undefined) {
+      response.headers.append(
+        "set-cookie",
+        `${fallbackCookieName}=; Path=/; Max-Age=0; Secure; SameSite=Lax`,
       );
     }
     return response;

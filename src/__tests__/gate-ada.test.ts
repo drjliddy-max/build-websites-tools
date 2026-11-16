@@ -102,3 +102,63 @@ describe("refusal cleanup contract", () => {
     );
   });
 });
+
+/*
+ * launchChromiumWithFallback: use the machine's installed Chrome when Playwright's
+ * own download is absent.
+ *
+ * Context (2026-11-03, Alder & Stone acceptance build): on a developer Mac with
+ * Google Chrome installed but no `npx playwright install`, `chromium.launch()`
+ * threw "Executable doesn't exist" and gate:ada silently fell back to html-snapshot
+ * mode (no color-contrast), exactly the weaker-than-local result described above,
+ * even though a perfectly good browser was present. The fallback order is now:
+ * Playwright's bundled Chromium, then the installed Chrome channel, then (and only
+ * then) the snapshot downgrade. Cloud images with neither are unchanged.
+ */
+import { launchChromiumWithFallback } from "../gate-ada";
+
+type Launch = (opts?: { channel?: string }) => Promise<never>;
+const fakeBrowser = (tag: string) => ({ tag }) as never;
+
+describe("launchChromiumWithFallback", () => {
+  it("uses the bundled Chromium when it launches, without touching Chrome", async () => {
+    const calls: Array<string | undefined> = [];
+    const launcher = {
+      launch: (async (opts?: { channel?: string }) => {
+        calls.push(opts?.channel);
+        return fakeBrowser("bundled");
+      }) as Launch,
+    };
+    const r = await launchChromiumWithFallback(launcher);
+    assert.equal(r.via, "bundled");
+    assert.deepEqual(calls, [undefined]);
+  });
+
+  it("falls back to the installed Chrome channel when the bundled browser is missing", async () => {
+    const calls: Array<string | undefined> = [];
+    const launcher = {
+      launch: (async (opts?: { channel?: string }) => {
+        calls.push(opts?.channel);
+        if (!opts?.channel) throw new Error("Executable doesn't exist at /x/chromium");
+        return fakeBrowser("chrome");
+      }) as Launch,
+    };
+    const r = await launchChromiumWithFallback(launcher);
+    assert.equal(r.via, "installed-chrome");
+    assert.deepEqual(calls, [undefined, "chrome"]);
+  });
+
+  it("reports every failure, and no browser, when neither launches (cloud image: unchanged)", async () => {
+    const launcher = {
+      launch: (async (opts?: { channel?: string }) => {
+        throw new Error(opts?.channel ? "chrome not installed" : "bundled missing");
+      }) as Launch,
+    };
+    const r = await launchChromiumWithFallback(launcher);
+    assert.equal(r.browser, null);
+    assert.equal(r.via, null);
+    assert.equal(r.errors.length, 2);
+    assert.match(r.errors.join("\n"), /bundled missing/);
+    assert.match(r.errors.join("\n"), /chrome not installed/);
+  });
+});

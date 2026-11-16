@@ -4,6 +4,17 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+- `conversion-relay`: new opt-in `persistFallbackId: false`. A visitor without `_ga` cookies (declined or undecided) gets a fresh client id on every request, no fallback cookie is set, and a fallback cookie set earlier is ignored and expired (`Max-Age=0`, `Path=/`). Clicks are still counted, one by one, but never linked across visits. Consented visitors are unaffected.
+  - `why`: owner decision 2026-11-15 for babymilestonejournal.com: a visitor who declines analytics must not carry a persistent identifier. The relay had been giving every non-consenting visitor a 2-year `<site>_cid` cookie, which contradicts a banner saying analytics load only after you accept.
+  - The expiry is sent on EVERY response (including 400, 503 and 502), with exactly `Path=/` and no `Domain`, matching how the cookie was set.
+  - The default stays `true`: the handler returned is the same function as before, so no consumer changes until it opts in AND advances its pin. Eight new tests in `src/__tests__/conversion-relay.test.ts`; mutants of the new logic (reuse the old cookie, persist anyway, skip the expiry, skip the wrapper, flip the default, expire with `Path=/api` or a `Domain`) each fail them.
+
+- `gate-ada`: when Playwright's bundled Chromium is not installed, the gate now tries the machine's installed Google Chrome (`channel: "chrome"`) before it falls back to html-snapshot mode.
+  - `why`: found in the 2026-11-03 Alder & Stone acceptance build. On a developer Mac with Chrome but no `npx playwright install`, `gate:ada` reported `PASS [html-snapshot mode; color-contrast not evaluated]` with a working browser sitting right there.
+  - Hosts with neither browser, such as stock cloud build images, behave exactly as before, so `ada.requireBrowserMode` is unchanged.
+  - Local runs on machines that have Chrome can now evaluate color-contrast, and so can surface contrast findings the snapshot mode hid. That is the intended coverage.
+  - `launchChromiumWithFallback` is exported and unit-tested; three new tests in `src/__tests__/gate-ada.test.ts`.
+  - Consumers get this only by advancing their pin to a release that includes it.
 - `blog-writer` (OBJ-d23f3769adcc PE-1): a run that carries a Site Monitor dispatch identity must be addressed to this lane and this slot. `dispatch.jobKey` must equal the lane key, and `dispatch.idempotencyKey` must equal the occurrence's own key (`<laneKey>:<occurrence>:1`, the same template Site Monitor's registry uses). Otherwise the run fails at the new stage `correlate-dispatch`, before anything publishes, and the refused identity stays in the FAILED proof.
   - A null dispatch is unchanged (dry-runs, library callers).
   - `why`: Site Monitor finds a run by the triple echoed into its proof. A well-formed triple for another lane or slot would therefore verify that other job record.

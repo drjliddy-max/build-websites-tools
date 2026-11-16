@@ -34,12 +34,53 @@ interface BrowserSession {
 
 type AxeResults = Awaited<ReturnType<AxeBuilder["analyze"]>>;
 
+type LaunchResult =
+  | { browser: Browser; via: "bundled" | "installed-chrome"; errors: string[] }
+  | { browser: null; via: null; errors: string[] };
+
+/**
+ * Launch order: Playwright's bundled Chromium, then the machine's installed Google
+ * Chrome (`channel: "chrome"`), and only if both fail report no browser so the caller
+ * can take the snapshot downgrade. A developer Mac with Chrome but no
+ * `npx playwright install` previously fell straight to snapshot mode (no axe
+ * color-contrast) with a perfectly good browser present. Hosts with neither, such as
+ * stock cloud build images, behave exactly as before. Exported so the order is
+ * unit-testable without uninstalling a browser.
+ */
+export async function launchChromiumWithFallback(launcher: {
+  launch: (options?: { channel?: string }) => Promise<Browser>;
+}): Promise<LaunchResult> {
+  const errors: string[] = [];
+  const attempts: Array<{ via: "bundled" | "installed-chrome"; options?: { channel: string } }> = [
+    { via: "bundled" },
+    { via: "installed-chrome", options: { channel: "chrome" } },
+  ];
+  for (const attempt of attempts) {
+    try {
+      const browser = await launcher.launch(attempt.options);
+      return { browser, via: attempt.via, errors };
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  return { browser: null, via: null, errors };
+}
+
 async function createBrowserSession(): Promise<BrowserSession | null> {
+  const launched = await launchChromiumWithFallback(chromium);
+  if (!launched.browser) {
+    console.warn(
+      `gate:ada  browser launch unavailable, falling back to HTML snapshot mode: ${launched.errors.join(" | ")}`,
+    );
+    return null;
+  }
+  if (launched.via === "installed-chrome") {
+    console.warn("gate:ada  Playwright's bundled Chromium is not installed; using the installed Google Chrome.");
+  }
   try {
-    const browser = await chromium.launch();
-    const context = await browser.newContext();
+    const context = await launched.browser.newContext();
     const page = await context.newPage();
-    return { browser, page };
+    return { browser: launched.browser, page };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.warn(
