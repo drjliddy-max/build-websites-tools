@@ -457,7 +457,7 @@ export function createTrackHandler(options) {
       ? opts.measurementIdEnvKeys
       : ["GA4_MEASUREMENT_ID", "NEXT_PUBLIC_GA_MEASUREMENT_ID"];
 
-  return async function handleTrackPost(request) {
+  const handleTrackPost = async function handleTrackPost(request) {
     const env = getEnv();
     // TRIM. A deploy platform's env editor happily stores a trailing newline,
     // and every UI renders "G-XXXX\n" identically to "G-XXXX". Untrimmed, that
@@ -621,11 +621,22 @@ export function createTrackHandler(options) {
         `${fallbackCookieName}=${encodeURIComponent(identity.clientId)}; Path=/; Max-Age=${cookieMaxAgeSeconds}; Secure; SameSite=Lax`,
       );
     }
-    // persistFallbackId: false must also END persistence for visitors who were
-    // given the cookie before the site opted in. Ignoring it is not enough: it
-    // would stay in the browser for up to two years. Expire it whenever it is
-    // sent, consented or not (a consented visitor never needs it either).
-    if (!persistFallbackId && parseCookies(cookieHeader)[fallbackCookieName] !== undefined) {
+    return response;
+  };
+
+  if (persistFallbackId) return handleTrackPost;
+
+  // persistFallbackId: false must also END persistence for visitors who were
+  // given the cookie before the site opted in. Ignoring it is not enough: it
+  // would stay in the browser for up to two years. Expire it whenever it is
+  // sent, consented or not (a consented visitor never needs it either), and on
+  // EVERY response, including 400/405/503/502, so a request that fails still
+  // clears it. Path=/ and no Domain match how the cookie was set (host-only),
+  // which is what makes the browser delete that cookie rather than a sibling.
+  return async function handleTrackPostWithoutPersistentId(request) {
+    const response = await handleTrackPost(request);
+    const sent = parseCookies(request.headers.get("cookie") || "")[fallbackCookieName];
+    if (sent !== undefined) {
       response.headers.append(
         "set-cookie",
         `${fallbackCookieName}=; Path=/; Max-Age=0; Secure; SameSite=Lax`,

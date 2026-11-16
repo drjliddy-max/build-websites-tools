@@ -299,10 +299,37 @@ test("handler with persistFallbackId:false expires a fallback cookie set before 
   const res = await handler(makeRequest({ name: "buy" }, { cookie: "bmj_cid=OLD.123" }));
   assert.equal(res.status, 200);
   assert.equal(calls[0].body.client_id, "FRESH.1", "the old id must not be sent");
-  const cookie = res.headers.get("set-cookie") ?? "";
-  assert.match(cookie, /^bmj_cid=;/, "the legacy cookie is cleared");
-  assert.match(cookie, /Max-Age=0/);
-  assert.match(cookie, /Path=\//, "Path must match the original cookie or the browser keeps it");
+  // Exact string: Path must be "/" and there must be no Domain, matching the
+  // host-only Path=/ cookie the relay set. Any other Path or a Domain names a
+  // different cookie, and the browser keeps the old one (review LOW-1).
+  assert.equal(
+    res.headers.get("set-cookie"),
+    "bmj_cid=; Path=/; Max-Age=0; Secure; SameSite=Lax",
+  );
+});
+
+test("handler with persistFallbackId:false expires the legacy cookie on a rejected request too", async () => {
+  // Review LOW-2: a 400 (unknown event) must still clear the cookie.
+  const { calls, impl } = recordingFetch();
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl,
+    fallbackCookieName: "bmj_cid", persistFallbackId: false,
+  });
+  const res = await handler(makeRequest({ name: "not_allowed" }, { cookie: "bmj_cid=OLD.123" }));
+  assert.equal(res.status, 400);
+  assert.equal(calls.length, 0);
+  assert.equal(res.headers.get("set-cookie"), "bmj_cid=; Path=/; Max-Age=0; Secure; SameSite=Lax");
+});
+
+test("handler with persistFallbackId:false expires the legacy cookie when GA4 rejects the event", async () => {
+  const { impl } = recordingFetch(400);
+  const handler = createTrackHandler({
+    allowedEvents: ["buy"], getEnv: () => ENV, fetchImpl: impl,
+    fallbackCookieName: "bmj_cid", persistFallbackId: false,
+  });
+  const res = await handler(makeRequest({ name: "buy" }, { cookie: "bmj_cid=OLD.123" }));
+  assert.equal(res.status, 502);
+  assert.equal(res.headers.get("set-cookie"), "bmj_cid=; Path=/; Max-Age=0; Secure; SameSite=Lax");
 });
 
 test("handler with persistFallbackId:false expires the legacy cookie for a consented visitor too", async () => {
