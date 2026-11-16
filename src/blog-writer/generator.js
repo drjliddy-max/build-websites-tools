@@ -311,7 +311,18 @@ export function parseModelJson(raw) {
  * Ollama provider. The local lane. Requires no hosted credential, which is why
  * the generator is provable on this machine today.
  */
-export function createLocalProvider({ model = "phi4:14b", endpoint = "http://127.0.0.1:11434", fetchImpl = fetch } = {}) {
+/**
+ * Where the local model server lives. Defaults to this machine's Ollama. A
+ * containerized runner cannot reach the host's loopback as 127.0.0.1, so it
+ * names the host gateway here (for example http://host.docker.internal:11434)
+ * instead of each consumer entrypoint growing its own endpoint logic.
+ */
+export const LOCAL_MODEL_ENDPOINT_ENV = "BLOG_WRITER_LOCAL_MODEL_ENDPOINT";
+function defaultLocalEndpoint() {
+  return process.env[LOCAL_MODEL_ENDPOINT_ENV]?.trim() || "http://127.0.0.1:11434";
+}
+
+export function createLocalProvider({ model = "phi4:14b", endpoint = defaultLocalEndpoint(), fetchImpl = fetch } = {}) {
   return {
     id: "local",
     model,

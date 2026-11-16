@@ -160,3 +160,22 @@ test("a run whose last failure is NOT funding keeps the generic failure (no fals
     },
   );
 });
+
+test("BLOG_WRITER_LOCAL_MODEL_ENDPOINT moves the local endpoint (container runner reaching the host's Ollama)", async () => {
+  const seen = [];
+  const fetchImpl = async (url) => { seen.push(String(url)); return { ok: true, status: 200, json: async () => ({ response: "{}" }) }; };
+  process.env.BLOG_WRITER_LOCAL_MODEL_ENDPOINT = "http://host.docker.internal:11434";
+  try {
+    await createLocalProvider({ model: "qwen3:14b", fetchImpl }).complete("p");
+    // An explicit endpoint still wins over the environment.
+    await createLocalProvider({ model: "qwen3:14b", endpoint: "http://127.0.0.9:1", fetchImpl }).complete("p");
+  } finally {
+    delete process.env.BLOG_WRITER_LOCAL_MODEL_ENDPOINT;
+  }
+  await createLocalProvider({ model: "qwen3:14b", fetchImpl }).complete("p");
+  assert.deepEqual(seen, [
+    "http://host.docker.internal:11434/api/generate",
+    "http://127.0.0.9:1/api/generate",
+    "http://127.0.0.1:11434/api/generate",
+  ]);
+});
