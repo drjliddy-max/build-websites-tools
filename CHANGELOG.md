@@ -4,6 +4,8 @@ Get notified of major releases by subscribing at [siteclinic.io](https://sitecli
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-15
+
 - `conversion-relay`: new opt-in `persistFallbackId: false`. A visitor without `_ga` cookies (declined or undecided) gets a fresh client id on every request, no fallback cookie is set, and a fallback cookie set earlier is ignored and expired (`Max-Age=0`, `Path=/`). Clicks are still counted, one by one, but never linked across visits. Consented visitors are unaffected.
   - `why`: owner decision 2026-11-15 for babymilestonejournal.com: a visitor who declines analytics must not carry a persistent identifier. The relay had been giving every non-consenting visitor a 2-year `<site>_cid` cookie, which contradicts a banner saying analytics load only after you accept.
   - The expiry is sent on EVERY response (including 400, 503 and 502), with exactly `Path=/` and no `Domain`, matching how the cookie was set.
