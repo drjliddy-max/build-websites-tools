@@ -20,6 +20,7 @@ import {
   readGaClientId,
   readGaSessionId,
   resolveIdentity,
+  RESERVED_ATTRIBUTION_PARAMS,
   sanitizeParams,
 } from "../conversion-relay.js";
 
@@ -165,6 +166,38 @@ test("sanitizeParams drops non-conforming keys and non-primitive values", () => 
     nested: { a: 1 }, arr: [1], nil: null,
   });
   assert.deepEqual(out, { ok: "yes", num: 1, bool: true });
+});
+
+test("sanitizeParams drops GA4 attribution-attribution-conflict names so they cannot create bogus traffic sources", () => {
+  assert.deepEqual(
+    sanitizeParams({ source: "health_scan_results", medium: "x", campaign: "c", term: "t", content: "k", gclid: "g", session_id: "9", engagement_time_msec: 1, cta_source: "health_scan_results", tier: "pro" }),
+    { cta_source: "health_scan_results", tier: "pro" },
+  );
+});
+
+// Owner precondition for #59: legitimate page-context fields must be PROVEN preserved. Before this test,
+// adding page_location to the drop list failed zero tests (independent review of 6c8d88b).
+test("sanitizeParams preserves legitimate page-context params (page_location, page_referrer, page_title)", () => {
+  const page = { page_location: "https://siteclinic.io/pricing?plan=pro", page_referrer: "https://www.google.com/", page_title: "Pricing" };
+  assert.deepEqual(sanitizeParams({ ...page, source: "pricing" }), page);
+  for (const k of Object.keys(page)) assert.equal(RESERVED_ATTRIBUTION_PARAMS.has(k), false, `${k} must not be on the drop list`);
+});
+
+test("page_location and page_referrer reach the Measurement Protocol payload unchanged", () => {
+  const p = buildMeasurementProtocolPayload({
+    name: "checkout_started",
+    params: { page_location: "https://siteclinic.io/pricing", page_referrer: "https://www.google.com/", cta_source: "pricing" },
+    clientId: "1.2", sessionId: "1700000000",
+  });
+  assert.equal(p.events[0].params.page_location, "https://siteclinic.io/pricing");
+  assert.equal(p.events[0].params.page_referrer, "https://www.google.com/");
+  assert.equal(p.events[0].params.cta_source, "pricing");
+});
+
+test("a consumer-supplied source/session_id cannot reach the Measurement Protocol payload or override the relay's session", () => {
+  const p = buildMeasurementProtocolPayload({ name: "checkout_started", params: { source: "pricing", session_id: "evil" }, clientId: "1.2", sessionId: "1700000000" });
+  assert.equal(p.events[0].params.source, undefined);
+  assert.equal(p.events[0].params.session_id, "1700000000");
 });
 
 test("sanitizeParams truncates long strings to 500 chars", () => {

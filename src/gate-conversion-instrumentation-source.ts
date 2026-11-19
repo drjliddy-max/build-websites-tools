@@ -87,6 +87,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { stripCommentsAndStrings } from "./gate-sitemap-source";
+import { RESERVED_ATTRIBUTION_PARAMS } from "./conversion-relay.js";
 
 export type CheckResult = {
   name: string;
@@ -492,6 +493,44 @@ export function evaluateDeliverySafePayload(bodies: string[]): CheckResult {
   };
 }
 
+// ─── Attribution-conflict event params ──────────────────────────────
+
+const TRACK_CALL_WITH_PARAMS = /(?<![.\w$])(?:trackEvent|track)\(\s*["'`][A-Za-z0-9_]+["'`]\s*,\s*\{([^}]*)\}/g;
+
+/**
+ * Flag client event calls whose literal param object uses a name that conflicts
+ * with GA4 attribution (see RESERVED_ATTRIBUTION_PARAMS). Source-literal scan
+ * only: params built dynamically are not seen, so a pass is not proof of absence.
+ * Exported for tests.
+ */
+export function evaluateAttributionConflictParams(
+  files: { rel: string; body: string }[],
+): CheckResult {
+  const hits: string[] = [];
+  for (const { rel, body } of files) {
+    const code = stripCommentsAndStrings(body, { strings: false });
+    for (const m of code.matchAll(TRACK_CALL_WITH_PARAMS)) {
+      for (const key of RESERVED_ATTRIBUTION_PARAMS) {
+        if (new RegExp(`(?:^|[,{\\s])["']?${key}["']?\\s*:`).test(m[1] ?? "")) {
+          hits.push(`${rel} (${key})`);
+        }
+      }
+    }
+  }
+  if (hits.length > 0) {
+    return {
+      name: "attributionConflictParams",
+      pass: false,
+      detail: `event params named like GA4 attribution fields: ${hits.join(", ")}. A bare "source"/"medium"/"campaign" event param can surface as a bogus traffic-source row (siteclinic.io, 2026-11-03). Rename with a prefix, e.g. cta_source. The shared relay drops these names.`,
+    };
+  }
+  return {
+    name: "attributionConflictParams",
+    pass: true,
+    detail: "no literal event-param object uses an attribution-conflict name (dynamic params are not scanned)",
+  };
+}
+
 // ─── Aggregate ───────────────────────────────────────────────────────
 
 export function evaluateSource({ cwd }: SiteRoot): SourceScanResult {
@@ -504,6 +543,11 @@ export function evaluateSource({ cwd }: SiteRoot): SourceScanResult {
     evaluateSingleDelivery(invocations, findGtagDualFireFiles({ cwd }, invocations)),
     evaluateSessionParams(collectRelayImplementation({ cwd }, routeFiles)),
     evaluateDeliverySafePayload(collectRelayImplementation({ cwd }, routeFiles)),
+    evaluateAttributionConflictParams(
+      collectSourceFiles({ cwd })
+        .filter((abs) => !path.relative(cwd, abs).split(path.sep).join("/").includes("api/track"))
+        .map((abs) => ({ rel: path.relative(cwd, abs), body: fs.readFileSync(abs, "utf8") })),
+    ),
   ];
   return { pass: checks.every((c) => c.pass), checks };
 }
@@ -518,6 +562,7 @@ interface SourceGateConfig {
     singleDelivery?: boolean;
     sessionParams?: boolean;
     deliverySafePayload?: boolean;
+    attributionConflictParams?: boolean;
     /** @deprecated v0.9.0 name for singleDelivery; still honoured so an
      *  existing gate.config.json opt-out does not silently start failing. */
     relayInvoked?: boolean;
